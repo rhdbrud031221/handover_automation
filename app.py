@@ -5,6 +5,7 @@ import pandas as pd
 import streamlit as st
 from docx import Document
 from memo_parser import parse_memo_text
+from qa_engine import build_knowledge_base, search_knowledge, make_answer
 from docx.shared import Pt
 from docx.oxml.ns import qn
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -1017,3 +1018,162 @@ with c2:
 
 with st.expander("현재 저장될 데이터 미리보기"):
     st.json(data)
+# ==================================================
+# 후임자 업무 Q&A
+# ==================================================
+
+st.divider()
+
+st.header("💬 후임자 업무 Q&A")
+
+st.caption(
+    "사내 업무 문서를 기반으로 질문에 답하고, "
+    "답변의 근거 문서와 위치를 함께 제공합니다."
+)
+
+qa_files = st.file_uploader(
+    "📚 검색할 업무 문서를 업로드하세요",
+    type=["pdf", "xlsx", "txt"],
+    accept_multiple_files=True,
+    key="qa_files"
+)
+
+if qa_files:
+
+    st.success(
+        f"✅ {len(qa_files)}개의 문서가 등록되었습니다."
+    )
+
+    with st.expander("등록된 문서 보기"):
+
+        for file in qa_files:
+            st.write(f"📄 {file.name}")
+
+
+question = st.text_input(
+    "후임자 질문",
+    placeholder="예: 이번 주에 먼저 해야 할 일이 뭐야?",
+    key="qa_question"
+)
+
+
+search_button = st.button(
+    "🔎 근거 기반 답변 찾기",
+    use_container_width=True,
+    key="qa_search_button"
+)
+
+
+if search_button:
+
+    # ------------------------------
+    # 파일 확인
+    # ------------------------------
+
+    if not qa_files:
+
+        st.warning(
+            "먼저 검색할 업무 문서를 업로드해주세요."
+        )
+
+    # ------------------------------
+    # 질문 확인
+    # ------------------------------
+
+    elif not question.strip():
+
+        st.warning(
+            "후임자 질문을 입력해주세요."
+        )
+
+    else:
+
+        try:
+
+            # --------------------------
+            # 문서를 업무 지식 DB로 변환
+            # --------------------------
+
+            knowledge = build_knowledge_base(
+                qa_files
+            )
+
+            if not knowledge:
+
+                st.warning(
+                    "문서에서 읽을 수 있는 내용을 "
+                    "찾지 못했습니다."
+                )
+
+            else:
+
+                # ----------------------
+                # 관련 근거 검색
+                # ----------------------
+
+                results = search_knowledge(
+                    question,
+                    knowledge,
+                    today=date.today(),
+                    top_k=3
+                )
+
+                # ----------------------
+                # 답변 생성
+                # ----------------------
+
+                answer = make_answer(
+                    question,
+                    results,
+                    today=date.today()
+                )
+
+                st.markdown("### 🤖 답변")
+
+                st.info(answer)
+
+                # ----------------------
+                # 근거 출력
+                # ----------------------
+
+                if results:
+
+                    st.markdown("### 📎 근거 문서")
+
+                    for i, result in enumerate(
+                        results,
+                        start=1
+                    ):
+
+                        source = result[
+                            "source"
+                        ]
+
+                        location = result[
+                            "location"
+                        ]
+
+                        with st.expander(
+                            f"{i}. {source} · {location}"
+                        ):
+
+                            st.write(
+                                result["text"]
+                            )
+
+                            if result.get(
+                                "date"
+                            ):
+
+                                st.caption(
+                                    "인식된 일정: "
+                                    f"{result['date'].year}-"
+                                    f"{result['date'].month:02d}-"
+                                    f"{result['date'].day:02d}"
+                                )
+
+        except Exception as e:
+
+            st.error(
+                f"문서를 처리하는 중 오류가 발생했습니다: {e}"
+            )
