@@ -1,22 +1,24 @@
 import io
 import re
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from pypdf import PdfReader
 from openpyxl import load_workbook
 
 
-# 질문에서 검색에 크게 필요 없는 단어
+# --------------------------------------------------
+# 기본 설정
+# --------------------------------------------------
+
 STOPWORDS = {
-    "이번", "주에", "이번주",
-    "먼저", "해야", "해야할", "할",
-    "일", "일이", "뭐야",
-    "무엇", "알려줘",
-    "어떤", "있는", "있어",
-    "가장", "업무", "관련"
+    "알려줘", "알려", "뭐야", "무엇", "뭐", "어떤",
+    "관련", "대한", "있는", "있어", "있나요",
+    "업무", "일정", "내용",
+    "이번", "이번주", "주에",
+    "해줘", "줘",
 }
 
-# 일정/마감 판단에 중요한 단어
+
 DEADLINE_WORDS = {
     "제출",
     "마감",
@@ -32,31 +34,49 @@ DEADLINE_WORDS = {
 
 
 def clean_text(text):
-    return re.sub(r"\s+", " ", str(text or "")).strip()
+    return re.sub(
+        r"\s+",
+        " ",
+        str(text or "")
+    ).strip()
 
 
 # --------------------------------------------------
-# 날짜 찾기
+# 날짜 처리
 # --------------------------------------------------
 
 def parse_date(text, today=None):
 
     today = today or date.today()
 
+    text = clean_text(text)
+
     patterns = [
-        # 2026-08-29 / 2026.08.29 / 2026년 8월 29일
-        r"(?P<y>20\d{2})[.\-/년]\s*(?P<m>\d{1,2})[.\-/월]\s*(?P<d>\d{1,2})일?",
 
-        # 8월 29일
-        r"(?P<m>\d{1,2})월\s*(?P<d>\d{1,2})일",
+        # 2026-09-03
+        # 2026.09.03
+        # 2026년 9월 3일
+        r"(?P<y>20\d{2})[.\-/년]\s*"
+        r"(?P<m>\d{1,2})[.\-/월]\s*"
+        r"(?P<d>\d{1,2})일?",
 
-        # 8/29
-        r"(?P<m>\d{1,2})/(?P<d>\d{1,2})",
+        # 9월 3일
+        r"(?P<m>\d{1,2})월\s*"
+        r"(?P<d>\d{1,2})일",
+
+        # 9/3
+        # 9-3
+        # 9.3
+        r"(?P<m>\d{1,2})[./-]"
+        r"(?P<d>\d{1,2})",
     ]
 
     for pattern in patterns:
 
-        match = re.search(pattern, text)
+        match = re.search(
+            pattern,
+            text
+        )
 
         if not match:
             continue
@@ -69,18 +89,31 @@ def parse_date(text, today=None):
             else today.year
         )
 
-        month = int(groups["m"])
-        day = int(groups["d"])
+        month = int(
+            groups["m"]
+        )
+
+        day = int(
+            groups["d"]
+        )
 
         try:
-            result = date(year, month, day)
 
-            # 연도가 없는데 이미 오래 지난 날짜면
-            # 다음 해 일정으로 판단
+            result = date(
+                year,
+                month,
+                day
+            )
+
+            # 연도가 없는 일정인데
+            # 현재 날짜보다 너무 오래 전이면
+            # 다음 해 일정으로 간주
             if (
                 not groups.get("y")
-                and result < today - timedelta(days=90)
+                and
+                result < today - timedelta(days=90)
             ):
+
                 result = date(
                     today.year + 1,
                     month,
@@ -95,40 +128,43 @@ def parse_date(text, today=None):
     return None
 
 
-# --------------------------------------------------
-# PDF 읽기
-# --------------------------------------------------
+def format_excel_value(value):
 
-def load_pdf(uploaded_file):
+    if value is None:
+        return ""
 
-    chunks = []
-
-    reader = PdfReader(
-        io.BytesIO(uploaded_file.getvalue())
-    )
-
-    for page_number, page in enumerate(
-        reader.pages,
-        start=1
+    if isinstance(
+        value,
+        (datetime, date)
     ):
 
-        text = page.extract_text() or ""
+        return (
+            f"{value.month}/"
+            f"{value.day}"
+        )
 
-        if text.strip():
+    return clean_text(
+        value
+    )
 
-            chunks.append({
 
-                "text": text,
+# --------------------------------------------------
+# Excel 열 이름 찾기
+# --------------------------------------------------
 
-                "source": uploaded_file.name,
+def find_column(
+    headers,
+    candidates
+):
 
-                # ⭐ 페이지 번호 저장
-                "location": f"p.{page_number}",
+    for candidate in candidates:
 
-                "type": "pdf"
-            })
+        for index, header in enumerate(headers):
 
-    return chunks
+            if candidate == header:
+                return index
+
+    return None
 
 
 # --------------------------------------------------
@@ -140,60 +176,219 @@ def load_excel(uploaded_file):
     chunks = []
 
     workbook = load_workbook(
-        io.BytesIO(uploaded_file.getvalue()),
+        io.BytesIO(
+            uploaded_file.getvalue()
+        ),
         data_only=True
     )
 
     for sheet in workbook.worksheets:
 
+        rows = list(
+            sheet.iter_rows(
+                values_only=True
+            )
+        )
+
+        if not rows:
+            continue
+
+        # ------------------------------
+        # 1행 = 제목으로 사용
+        # ------------------------------
+
+        headers = [
+            clean_text(value)
+            for value in rows[0]
+        ]
+
+        date_col = find_column(
+            headers,
+            [
+                "일자",
+                "날짜",
+                "일정"
+            ]
+        )
+
+        task_col = find_column(
+            headers,
+            [
+                "업무",
+                "업무명",
+                "내용",
+                "일정 내용"
+            ]
+        )
+
+        owner_col = find_column(
+            headers,
+            [
+                "담당",
+                "담당자",
+                "담당 부서"
+            ]
+        )
+
+        status_col = find_column(
+            headers,
+            [
+                "상태",
+                "진행상태",
+                "진행 상태"
+            ]
+        )
+
+        note_col = find_column(
+            headers,
+            [
+                "비고",
+                "메모",
+                "특이사항"
+            ]
+        )
+
+        # ------------------------------
+        # 실제 데이터
+        # ------------------------------
+
         for row_number, row in enumerate(
-            sheet.iter_rows(values_only=True),
-            start=1
+            rows[1:],
+            start=2
         ):
 
-            values = []
+            values = [
+                format_excel_value(value)
+                for value in row
+            ]
 
-            for value in row:
-
-                if value is not None:
-
-                    value = clean_text(value)
-
-                    if value:
-                        values.append(value)
-
-            if not values:
+            if not any(values):
                 continue
 
-            text = " | ".join(values)
+            def get_value(index):
+
+                if index is None:
+                    return ""
+
+                if index >= len(values):
+                    return ""
+
+                return values[index]
+
+            record = {
+
+                "일자":
+                    get_value(date_col),
+
+                "업무":
+                    get_value(task_col),
+
+                "담당":
+                    get_value(owner_col),
+
+                "상태":
+                    get_value(status_col),
+
+                "비고":
+                    get_value(note_col)
+            }
+
+            # 기존 검색과의 호환을 위한 전체 텍스트
+            text = " | ".join(
+                [
+                    value
+                    for value in record.values()
+                    if value
+                ]
+            )
 
             chunks.append({
 
                 "text": text,
 
-                "source": uploaded_file.name,
+                "source":
+                    uploaded_file.name,
 
-                # ⭐ 실제 엑셀 행 번호 저장
                 "location":
-                    f"{sheet.title} 시트 {row_number}행",
+                    f"{sheet.title} 시트 "
+                    f"{row_number}행",
 
-                "type": "xlsx"
+                "type":
+                    "xlsx",
+
+                # ⭐ 핵심
+                # 각 열을 따로 저장
+                "record":
+                    record,
+
+                "date":
+                    parse_date(
+                        record["일자"]
+                    )
             })
 
     return chunks
 
 
 # --------------------------------------------------
-# TXT 읽기
+# PDF
+# --------------------------------------------------
+
+def load_pdf(uploaded_file):
+
+    chunks = []
+
+    reader = PdfReader(
+        io.BytesIO(
+            uploaded_file.getvalue()
+        )
+    )
+
+    for page_number, page in enumerate(
+        reader.pages,
+        start=1
+    ):
+
+        text = (
+            page.extract_text()
+            or ""
+        )
+
+        if not text.strip():
+            continue
+
+        chunks.append({
+
+            "text": text,
+
+            "source":
+                uploaded_file.name,
+
+            "location":
+                f"p.{page_number}",
+
+            "type":
+                "pdf"
+        })
+
+    return chunks
+
+
+# --------------------------------------------------
+# TXT
 # --------------------------------------------------
 
 def load_txt(uploaded_file):
 
     chunks = []
 
-    text = uploaded_file.getvalue().decode(
-        "utf-8-sig",
-        errors="ignore"
+    text = (
+        uploaded_file
+        .getvalue()
+        .decode(
+            "utf-8-sig",
+            errors="ignore"
+        )
     )
 
     for line_number, line in enumerate(
@@ -201,59 +396,142 @@ def load_txt(uploaded_file):
         start=1
     ):
 
-        if line.strip():
+        if not line.strip():
+            continue
 
-            chunks.append({
+        chunks.append({
 
-                "text": line,
+            "text":
+                line.strip(),
 
-                "source": uploaded_file.name,
+            "source":
+                uploaded_file.name,
 
-                "location": f"{line_number}행",
+            "location":
+                f"{line_number}행",
 
-                "type": "txt"
-            })
+            "type":
+                "txt"
+        })
 
     return chunks
 
 
 # --------------------------------------------------
-# 모든 문서를 하나의 업무 지식 DB로 만들기
+# 지식 DB 생성
 # --------------------------------------------------
 
-def build_knowledge_base(uploaded_files):
+def build_knowledge_base(
+    uploaded_files
+):
 
     knowledge = []
 
     for uploaded_file in uploaded_files:
 
-        filename = uploaded_file.name.lower()
+        filename = (
+            uploaded_file.name.lower()
+        )
 
-        if filename.endswith(".pdf"):
+        if filename.endswith(
+            ".xlsx"
+        ):
 
             knowledge.extend(
-                load_pdf(uploaded_file)
+                load_excel(
+                    uploaded_file
+                )
             )
 
-        elif filename.endswith(".xlsx"):
+        elif filename.endswith(
+            ".pdf"
+        ):
 
             knowledge.extend(
-                load_excel(uploaded_file)
+                load_pdf(
+                    uploaded_file
+                )
             )
 
-        elif filename.endswith(".txt"):
+        elif filename.endswith(
+            ".txt"
+        ):
 
             knowledge.extend(
-                load_txt(uploaded_file)
+                load_txt(
+                    uploaded_file
+                )
             )
 
     return knowledge
 
+
 # --------------------------------------------------
-# 질문에서 핵심 단어 뽑기
+# 질문 의도 분석
 # --------------------------------------------------
 
-def get_question_keywords(question):
+def detect_intent(question):
+
+    q = question.replace(
+        " ",
+        ""
+    )
+
+    if any(
+        word in q
+        for word in [
+            "담당",
+            "담당자",
+            "누가",
+            "누구"
+        ]
+    ):
+        return "담당"
+
+    if any(
+        word in q
+        for word in [
+            "상태",
+            "진행상태",
+            "진행중",
+            "완료됐",
+            "완료된"
+        ]
+    ):
+        return "상태"
+
+    if any(
+        word in q
+        for word in [
+            "비고",
+            "특이사항",
+            "주의사항",
+            "메모"
+        ]
+    ):
+        return "비고"
+
+    if any(
+        word in q
+        for word in [
+            "언제",
+            "날짜",
+            "일자",
+            "마감일"
+        ]
+    ):
+        return "일자"
+
+    return "전체"
+
+
+# --------------------------------------------------
+# 질문 키워드
+# --------------------------------------------------
+
+def get_question_keywords(
+    question
+):
 
     words = re.findall(
         r"[가-힣A-Za-z0-9]+",
@@ -264,30 +542,50 @@ def get_question_keywords(question):
 
     for word in words:
 
-        if word not in STOPWORDS and len(word) >= 2:
-            keywords.append(word)
+        if word in STOPWORDS:
+            continue
+
+        # 날짜 숫자는 따로 처리
+        if re.fullmatch(
+            r"\d+",
+            word
+        ):
+            continue
+
+        if len(word) >= 2:
+            keywords.append(
+                word
+            )
 
     return keywords
 
 
 # --------------------------------------------------
-# 질문과 관련 있는 문서 검색
+# 검색
 # --------------------------------------------------
 
 def search_knowledge(
     question,
     knowledge,
     today=None,
-    top_k=3
+    top_k=5
 ):
 
     today = today or date.today()
 
-    keywords = get_question_keywords(question)
+    question_date = parse_date(
+        question,
+        today=today
+    )
+
+    keywords = get_question_keywords(
+        question
+    )
 
     wants_week = (
         "이번 주" in question
-        or "이번주" in question
+        or
+        "이번주" in question
     )
 
     wants_priority = any(
@@ -296,109 +594,497 @@ def search_knowledge(
             "먼저",
             "우선",
             "급한",
-            "급하게",
+            "최우선",
             "가장 먼저"
         ]
     )
 
-    # 이번 주 일요일
-    week_end = today + timedelta(
-        days=6 - today.weekday()
+    week_end = (
+        today
+        +
+        timedelta(
+            days=6 - today.weekday()
+        )
     )
 
     results = []
 
     for item in knowledge:
 
-        text = clean_text(
-            item.get("text", "")
-        )
-
         score = 0
 
-        # ------------------------------
-        # 1. 질문 핵심 단어가 문서에 있는지
-        # ------------------------------
+        # ==================================
+        # Excel 구조화 데이터
+        # ==================================
 
-        for keyword in keywords:
+        if (
+            item.get("type")
+            == "xlsx"
+            and
+            item.get("record")
+        ):
 
-            if keyword.lower() in text.lower():
-                score += 5
+            record = item["record"]
 
-        # ------------------------------
-        # 2. 일정/업무 관련 단어가 있는지
-        # ------------------------------
+            item_date = (
+                item.get("date")
+                or
+                parse_date(
+                    record.get(
+                        "일자",
+                        ""
+                    ),
+                    today=today
+                )
+            )
 
-        for word in DEADLINE_WORDS:
+            task = record.get(
+                "업무",
+                ""
+            )
 
-            if word in text:
-                score += 1
+            owner = record.get(
+                "담당",
+                ""
+            )
 
-        # ------------------------------
-        # 3. 날짜 찾기
-        # ------------------------------
+            status = record.get(
+                "상태",
+                ""
+            )
 
-        item_date = parse_date(
-            text,
-            today=today
-        )
+            note = record.get(
+                "비고",
+                ""
+            )
 
-        # "이번 주" 질문이면
-        # 이번 주 일정에 높은 점수
-        if wants_week and item_date:
+            # --------------------------
+            # 날짜 질문은 최우선
+            # --------------------------
 
-            if today <= item_date <= week_end:
+            if question_date:
 
-                score += 20
+                if (
+                    item_date
+                    == question_date
+                ):
+                    score += 150
 
-                # 날짜가 가까울수록 추가 점수
+                else:
+                    # 다른 날짜는 거의 제외
+                    score -= 100
+
+            # --------------------------
+            # 키워드 검색
+            # --------------------------
+
+            for keyword in keywords:
+
+                if keyword in task.lower():
+                    score += 30
+
+                if keyword in owner.lower():
+                    score += 25
+
+                if keyword in status.lower():
+                    score += 25
+
+                if keyword in note.lower():
+                    score += 20
+
+            # --------------------------
+            # 진행 상태 질문
+            # --------------------------
+
+            for state_word in [
+                "진행중",
+                "완료",
+                "예정",
+                "미완료"
+            ]:
+
+                if (
+                    state_word in question
+                    and
+                    state_word in status
+                ):
+
+                    score += 80
+
+            # --------------------------
+            # 최우선 검색
+            # --------------------------
+
+            if (
+                "최우선" in question
+                and
+                "최우선" in note
+            ):
+                score += 100
+
+            # --------------------------
+            # 이번 주
+            # --------------------------
+
+            if (
+                wants_week
+                and
+                item_date
+            ):
+
+                if (
+                    today
+                    <= item_date
+                    <= week_end
+                ):
+
+                    score += 80
+
+            # --------------------------
+            # 먼저 해야 할 업무
+            # --------------------------
+
+            if (
+                wants_priority
+                and
+                item_date
+            ):
+
                 days_left = (
-                    item_date - today
+                    item_date
+                    -
+                    today
                 ).days
 
-                score += max(
-                    0,
-                    7 - days_left
+                if (
+                    0
+                    <= days_left
+                    <= 30
+                ):
+
+                    score += (
+                        30 - days_left
+                    )
+
+                if "최우선" in note:
+                    score += 60
+
+            if score > 0:
+
+                copied = item.copy()
+
+                copied[
+                    "score"
+                ] = score
+
+                copied[
+                    "date"
+                ] = item_date
+
+                results.append(
+                    copied
                 )
 
-        # "먼저 / 우선 / 급한" 질문이면
-        # 가까운 미래 일정 우선
-        if wants_priority and item_date:
+        # ==================================
+        # PDF / TXT
+        # ==================================
 
-            days_left = (
-                item_date - today
-            ).days
+        else:
 
-            if 0 <= days_left <= 30:
+            text = clean_text(
+                item.get(
+                    "text",
+                    ""
+                )
+            )
 
-                score += max(
-                    0,
-                    10 - days_left
+            for keyword in keywords:
+
+                if (
+                    keyword.lower()
+                    in text.lower()
+                ):
+                    score += 10
+
+            item_date = parse_date(
+                text,
+                today=today
+            )
+
+            if question_date:
+
+                if (
+                    item_date
+                    == question_date
+                ):
+                    score += 100
+
+            if score > 0:
+
+                copied = item.copy()
+
+                copied[
+                    "score"
+                ] = score
+
+                copied[
+                    "date"
+                ] = item_date
+
+                results.append(
+                    copied
                 )
 
-        if score > 0:
-
-            result = item.copy()
-
-            result["score"] = score
-            result["date"] = item_date
-
-            results.append(result)
-
-    # 점수 높은 순서
-    # 같은 점수면 날짜 가까운 순서
     results.sort(
         key=lambda x: (
             -x["score"],
-            x["date"] or date.max
+            x.get("date")
+            or date.max
         )
     )
 
-    return results[:top_k]
+    return results[
+        :top_k
+    ]
 
 
 # --------------------------------------------------
-# 검색 결과를 답변 문장으로 만들기
+# 날짜 표시
+# --------------------------------------------------
+
+def date_label(
+    value
+):
+
+    if not value:
+        return ""
+
+    return (
+        f"{value.month}월 "
+        f"{value.day}일"
+    )
+
+
+# --------------------------------------------------
+# Excel 답변 생성
+# --------------------------------------------------
+
+def make_excel_answer(
+    question,
+    results
+):
+
+    intent = detect_intent(
+        question
+    )
+
+    if not results:
+
+        return (
+            "조건에 맞는 업무를 "
+            "찾지 못했습니다."
+        )
+
+    # 점수 차이가 큰 경우
+    # 가장 정확한 결과만 사용
+    best_score = results[0][
+        "score"
+    ]
+
+    strong_results = [
+        result
+        for result in results
+        if result["score"]
+        >= best_score - 10
+    ]
+
+    # 최대 5개
+    strong_results = (
+        strong_results[:5]
+    )
+
+    # ------------------------------
+    # 하나의 업무
+    # ------------------------------
+
+    if len(
+        strong_results
+    ) == 1:
+
+        result = (
+            strong_results[0]
+        )
+
+        record = result[
+            "record"
+        ]
+
+        d = date_label(
+            result.get(
+                "date"
+            )
+        )
+
+        task = record.get(
+            "업무",
+            ""
+        )
+
+        owner = record.get(
+            "담당",
+            ""
+        )
+
+        status = record.get(
+            "상태",
+            ""
+        )
+
+        note = record.get(
+            "비고",
+            ""
+        )
+
+        if intent == "담당":
+
+            return (
+                f"{d} {task} 업무의 "
+                f"담당은 {owner}입니다."
+            )
+
+        if intent == "상태":
+
+            return (
+                f"{d} {task} 업무의 "
+                f"현재 상태는 "
+                f"{status}입니다."
+            )
+
+        if intent == "비고":
+
+            if note:
+
+                return (
+                    f"{d} {task} 업무의 "
+                    f"비고는 "
+                    f"'{note}'입니다."
+                )
+
+            return (
+                f"{d} {task} 업무에는 "
+                "별도로 등록된 "
+                "비고가 없습니다."
+            )
+
+        if intent == "일자":
+
+            return (
+                f"{task} 업무의 "
+                f"일자는 {d}입니다."
+            )
+
+        # 기본 전체 답변
+        answer = (
+            f"{d}에는 "
+            f"{task} 업무가 있습니다."
+        )
+
+        if owner:
+            answer += (
+                f" 담당은 "
+                f"{owner}입니다."
+            )
+
+        if status:
+            answer += (
+                f" 현재 상태는 "
+                f"{status}입니다."
+            )
+
+        if note:
+            answer += (
+                f" 비고는 "
+                f"'{note}'입니다."
+            )
+
+        return answer
+
+    # ------------------------------
+    # 여러 업무
+    # ------------------------------
+
+    lines = [
+        "조건에 맞는 업무를 "
+        f"{len(strong_results)}건 "
+        "찾았습니다."
+    ]
+
+    for result in strong_results:
+
+        record = result[
+            "record"
+        ]
+
+        d = date_label(
+            result.get(
+                "date"
+            )
+        )
+
+        task = record.get(
+            "업무",
+            ""
+        )
+
+        owner = record.get(
+            "담당",
+            ""
+        )
+
+        status = record.get(
+            "상태",
+            ""
+        )
+
+        line = (
+            f"- {d}: {task}"
+        )
+
+        extras = []
+
+        if owner:
+            extras.append(
+                f"담당 {owner}"
+            )
+
+        if status:
+            extras.append(
+                f"상태 {status}"
+            )
+
+        if extras:
+
+            line += (
+                " ("
+                +
+                ", ".join(
+                    extras
+                )
+                +
+                ")"
+            )
+
+        lines.append(
+            line
+        )
+
+    return "\n".join(
+        lines
+    )
+
+
+# --------------------------------------------------
+# 최종 답변 생성
 # --------------------------------------------------
 
 def make_answer(
@@ -412,67 +1098,55 @@ def make_answer(
     if not results:
 
         return (
-            "관련된 근거 문서를 찾지 못했습니다. "
-            "질문을 조금 더 구체적으로 입력해주세요."
+            "관련된 근거 문서를 "
+            "찾지 못했습니다. "
+            "질문을 조금 더 "
+            "구체적으로 입력해주세요."
         )
 
+    # Excel 결과가 최상위면
+    # 구조화된 답변 사용
+    excel_results = [
+        result
+        for result in results
+        if (
+            result.get("type")
+            == "xlsx"
+            and
+            result.get("record")
+        )
+    ]
+
+    if excel_results:
+
+        return make_excel_answer(
+            question,
+            excel_results
+        )
+
+    # PDF / TXT 기본 답변
     best = results[0]
 
     text = clean_text(
-        best["text"]
+        best.get(
+            "text",
+            ""
+        )
     )
 
-    found_date = best.get("date")
+    found_date = best.get(
+        "date"
+    )
 
-    # Excel의
-    # "8/29 | 커미셔닝 체크리스트 제출 | 설비팀"
-    # 같은 문장을 나누기
-    parts = [
-        clean_text(part)
-        for part in re.split(r"\||\n", text)
-        if clean_text(part)
-    ]
-
-    task = ""
-
-    # 제출/마감/점검 등이 들어있는 부분을
-    # 업무 내용으로 우선 선택
-    for part in parts:
-
-        if any(
-            word in part
-            for word in DEADLINE_WORDS
-        ):
-
-            task = part
-            break
-
-    # 못 찾았으면 날짜가 아닌 첫 문장 사용
-    if not task:
-
-        for part in parts:
-
-            if parse_date(
-                part,
-                today=today
-            ) is None:
-
-                task = part
-                break
-
-    if not task:
-        task = text[:150]
-
-    # 날짜가 있으면 자연스러운 답변 생성
     if found_date:
 
         return (
-            f"{found_date.month}월 "
-            f"{found_date.day}일까지 "
-            f"{task} 업무를 우선 확인해야 합니다."
+            f"{date_label(found_date)} "
+            f"관련 문서에서 다음 내용을 "
+            f"확인했습니다: {text[:200]}"
         )
 
     return (
-        "관련 문서에서 다음 업무를 확인했습니다: "
-        f"{task}"
+        "관련 문서에서 다음 내용을 "
+        f"확인했습니다: {text[:200]}"
     )
