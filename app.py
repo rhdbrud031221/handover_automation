@@ -8,6 +8,7 @@ from datetime import date, datetime
 from pathlib import Path
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 from docx import Document
 from docx.shared import Pt
 from docx.oxml.ns import qn
@@ -16,6 +17,753 @@ from docx.enum.table import WD_TABLE_ALIGNMENT, WD_CELL_VERTICAL_ALIGNMENT
 
 from memo_parser import parse_memo_text
 from qa_engine import answer_question
+
+
+# =========================================================
+# 팀원 일정표 모듈 - HTML/JavaScript 원본 내장
+# =========================================================
+ONBOARDING_SCHEDULE_HTML = r'''<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>후임자 온보딩 일과표 자동 생성기</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans+KR:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+<style>
+  :root{
+    --ink:#161A1F; --paper:#F2F3EF; --surface:#FFFFFF;
+    --line:#DFE1DA; --line-strong:#C7CAC1;
+    --accent:#0F6657; --accent-dark:#0B4A40; --accent-soft:#DCEFEA;
+    --amber:#9A6B14; --amber-soft:#F6E9D2;
+    --warn:#B14A16; --warn-soft:#F5E2D5;
+    --muted:#6B7069;
+    --shadow: 0 1px 2px rgba(20,20,15,0.04), 0 8px 24px rgba(20,20,15,0.05);
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{background:var(--paper); color:var(--ink); font-family:'IBM Plex Sans KR', sans-serif; line-height:1.55; -webkit-font-smoothing:antialiased;}
+  .mono{font-family:'IBM Plex Mono', monospace;}
+  header{border-bottom:1px solid var(--line); background:var(--surface); padding:22px 32px;}
+  header .mark{width:34px;height:34px;border-radius:8px;background:var(--accent);display:inline-flex;align-items:center;justify-content:center;color:white;font-weight:700;font-size:14px;font-family:'Space Grotesk',sans-serif;margin-right:10px;vertical-align:middle;}
+  header h1{font-size:18px;margin:0;font-weight:700;display:inline;vertical-align:middle;}
+  header p{margin:6px 0 0;font-size:12.5px;color:var(--muted);}
+  .demo-banner{max-width:1360px;margin:16px auto 0;padding:0 24px;}
+  .demo-banner .inner{background:var(--amber-soft);border:1px solid #E3CE9E;color:var(--amber);border-radius:10px;padding:10px 14px;font-size:12.3px;font-weight:600;line-height:1.5;}
+  .layout{display:grid; grid-template-columns:320px 1fr; gap:20px; padding:24px; max-width:1360px; margin:0 auto; align-items:start;}
+  @media (max-width:980px){ .layout{grid-template-columns:1fr;} }
+  .panel{background:var(--surface); border:1px solid var(--line); border-radius:14px; box-shadow:var(--shadow);}
+  .panel-head{padding:16px 18px 12px; border-bottom:1px solid var(--line);}
+  .panel-head h2{font-size:13px;margin:0;font-weight:700;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted);}
+  .panel-body{padding:14px 18px 18px;}
+  .source-block{margin-bottom:14px;}
+  .source-block:last-child{margin-bottom:0;}
+  .source-label{font-size:12px;font-weight:600;margin-bottom:5px;}
+  .source-label .req{font-size:10.5px;color:var(--muted);font-weight:400;}
+  .dropzone{border:1.5px dashed var(--line-strong); border-radius:10px; padding:12px 8px; text-align:center; cursor:pointer; background:#FBFBF9;}
+  .dropzone.drag{border-color:var(--accent); background:var(--accent-soft);}
+  .dropzone .dz-title{font-size:11.8px;font-weight:600;}
+  .dropzone .dz-sub{font-size:10.4px;color:var(--muted);margin-top:2px;}
+  input[type=file]{display:none;}
+  .file-list{margin-top:6px;display:flex;flex-direction:column;gap:4px;}
+  .file-item{display:flex;align-items:center;gap:6px;font-size:11px;padding:5px 8px;border-radius:6px;background:#FBFBF9;border:1px solid var(--line);}
+  .file-item .fname{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500;}
+  .file-item .fstatus{font-size:9.5px;color:var(--muted);font-family:'IBM Plex Mono',monospace;}
+  .file-item .fstatus.ok{color:var(--accent-dark);}
+  .file-item .fstatus.err{color:var(--warn);}
+  .file-item .fremove{cursor:pointer;color:var(--muted);font-size:12px;padding:1px 3px;}
+  .btn{appearance:none;border:none;cursor:pointer;font-family:'IBM Plex Sans KR',sans-serif;font-weight:600;font-size:13px;border-radius:8px;padding:9px 14px;}
+  .btn:disabled{opacity:0.5;cursor:default;}
+  .btn-primary{background:var(--accent); color:white;}
+  .btn-primary:hover:not(:disabled){background:var(--accent-dark);}
+  .btn-ghost{background:transparent;color:var(--accent-dark);border:1px solid var(--line-strong);}
+  .btn-block{width:100%;text-align:center;}
+  .row-btns{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;}
+  .week-tabs{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;}
+  .week-tab{border:1px solid var(--line-strong);border-radius:10px;padding:8px 14px;cursor:pointer;background:var(--surface);font-size:12.5px;font-weight:600;}
+  .week-tab.active{border-color:var(--accent);background:var(--accent-soft);}
+  .grid-wrap{overflow-x:auto;}
+  table.sched{border-collapse:collapse;width:100%;min-width:760px;}
+  table.sched th{font-size:11px;text-transform:uppercase;letter-spacing:0.04em;color:var(--muted);font-weight:700;padding:8px 6px;border-bottom:1px solid var(--line);text-align:left;}
+  table.sched td.timecol{font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:var(--muted);white-space:nowrap;padding:10px 8px 10px 0;vertical-align:top;}
+  table.sched td.cell{border:1px solid var(--line);padding:0;vertical-align:top;width:19%;}
+  .cell-inner{padding:8px 9px;min-height:58px;font-size:12px;}
+  .cell-inner.event{border-left:3px solid #C9A24A; background:var(--amber-soft);}
+  .cell-inner.task{border-left:3px solid var(--accent);}
+  .cell-inner.empty{border-left:3px solid var(--line-strong); background:#FBFBF9; color:var(--muted); font-size:11px;}
+  .cell-task{font-weight:600;line-height:1.4; outline:none; border-radius:5px; padding:1px 3px; margin:-1px -3px; cursor:text;}
+  .cell-task:hover{background:rgba(15,102,87,0.06);}
+  .cell-task:focus{background:var(--surface);box-shadow:0 0 0 2px var(--accent-soft);}
+  .cell-reason{font-size:10.3px;color:var(--muted);margin-top:4px;line-height:1.4;}
+  .cell-badge{display:inline-block;font-size:9px;font-weight:700;padding:1px 6px;border-radius:999px;margin-top:5px;font-family:'IBM Plex Mono',monospace;background:var(--line); color:var(--muted);}
+  .cell-badge.pri-긴급, .cell-badge.pri-상{background:var(--warn-soft);color:var(--warn);}
+  .cell-badge.pri-중{background:var(--accent-soft);color:var(--accent-dark);}
+  .cell-badge.edited{background:#EDE4F5;color:#6A4C93;margin-left:4px;}
+  tr.lunch td.cell .cell-inner{background:#F1F1EC;color:var(--muted);font-size:11px;text-align:center;border-left:3px solid var(--line-strong);}
+  .overflow-box{margin-top:14px;padding:12px 14px;border-radius:10px;border:1px solid var(--line);background:#FBFBF9;font-size:12px;}
+  .overflow-box h4{margin:0 0 6px;font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:0.04em;}
+  .overflow-box ul{margin:0;padding-left:18px;}
+  .mail-box{margin-top:10px;}
+  .mail-box summary{cursor:pointer;font-size:11.5px;color:var(--muted);font-weight:600;}
+  .mail-box .mail-item{font-size:11.5px;padding:6px 0;border-bottom:1px dashed var(--line);}
+  .hint{font-size:11.8px;color:var(--muted);margin-top:4px;}
+  .error{color:var(--warn);font-size:12px;margin-top:8px;}
+  .empty-msg{font-size:13px;color:var(--muted);padding:24px 0;text-align:center;}
+  .legend{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:10px;}
+  .legend span{font-size:10.6px;color:var(--muted);display:flex;align-items:center;gap:5px;}
+  .legend .sw{width:9px;height:9px;border-radius:3px;display:inline-block;}
+  .legend .sw.event{background:#C9A24A;}
+  .legend .sw.task{background:var(--accent);}
+  .legend .sw.empty{background:var(--line-strong);}
+  .role-toggle{display:flex;align-items:center;gap:8px;margin-bottom:12px;flex-wrap:wrap;}
+  .role-toggle .rt-label{font-size:11.5px;color:var(--muted);font-weight:600;}
+  .role-chip{font-size:12px;font-weight:600;padding:6px 12px;border-radius:999px;border:1px solid var(--line-strong);background:var(--surface);cursor:pointer;}
+  .role-chip.active{background:var(--ink);color:white;border-color:var(--ink);}
+  .role-chip.active.mentor{background:#6A4C93;border-color:#6A4C93;}
+  .cell-badge.edited.employee{background:var(--accent-soft);color:var(--accent-dark);}
+  .cell-badge.edited.mentor{background:#EDE4F5;color:#6A4C93;}
+  .week-tab .wt-sub{display:block;font-size:9.5px;font-weight:500;color:var(--muted);margin-top:2px;}
+</style>
+</head>
+<body>
+
+<header>
+  <div><span class="mark">S</span><h1>후임자 온보딩 일과표 자동 생성기</h1></div>
+  <p>회의록 · 캘린더 · 메일 문서를 업로드하면, 문서에 담긴 실제 일정과 미리 준비된 업무 자료를 합쳐서 <b>1주차는 최대한 빼곡하게</b>, <b>2주차는 실제 날짜에 있는 일정만</b> 반영한 일과표(월~금)를 만들어줍니다. 생성 후 칸을 클릭해 바로 수정할 수 있어요.</p>
+</header>
+
+<div class="layout">
+
+  <!-- LEFT -->
+  <div class="panel">
+    <div class="panel-head"><h2>문서 업로드</h2></div>
+    <div class="panel-body">
+
+      <div class="source-block">
+        <div class="source-label">회의록 <span class="req">(여러 개, docx)</span></div>
+        <div class="dropzone" data-target="meeting">
+          <div class="dz-title">파일 업로드</div>
+          <div class="dz-sub">.docx (여러 개 선택 가능)</div>
+        </div>
+        <input type="file" class="fileInput" data-target="meeting" accept=".docx" multiple>
+        <div class="file-list" id="fileList-meeting"></div>
+      </div>
+
+      <div class="source-block">
+        <div class="source-label">캘린더 문서 <span class="req">(06_인수인계_캘린더.docx)</span></div>
+        <div class="dropzone" data-target="calendar">
+          <div class="dz-title">파일 업로드</div>
+          <div class="dz-sub">.docx</div>
+        </div>
+        <input type="file" class="fileInput" data-target="calendar" accept=".docx">
+        <div class="file-list" id="fileList-calendar"></div>
+      </div>
+
+      <div class="source-block">
+        <div class="source-label">메일 <span class="req">(여러 개, 참고용 표시)</span></div>
+        <div class="dropzone" data-target="email">
+          <div class="dz-title">파일 업로드</div>
+          <div class="dz-sub">.docx (여러 개 선택 가능)</div>
+        </div>
+        <input type="file" class="fileInput" data-target="email" accept=".docx" multiple>
+        <div class="file-list" id="fileList-email"></div>
+      </div>
+
+      <div class="row-btns">
+        <button class="btn btn-primary btn-block" id="genBtn">일정표 생성</button>
+      </div>
+      <p class="hint">업무일정·프로젝트 현황·자산·연락망 내용은 도구 안에 이미 반영되어 있어서 따로 업로드하지 않아도 됩니다.</p>
+    </div>
+  </div>
+
+  <!-- RIGHT -->
+  <div class="panel">
+    <div class="panel-head"><h2>1주차 · 2주차 일과표</h2></div>
+    <div class="panel-body">
+
+      <div class="legend">
+        <span><span class="sw event"></span>회의록/캘린더의 고정 시간 일정</span>
+        <span><span class="sw task"></span>문서에서 온 업무/개요 항목</span>
+        <span><span class="sw empty"></span>여유 시간</span>
+      </div>
+
+      <div class="role-toggle">
+        <span class="rt-label">지금 누가 수정하나요?</span>
+        <div class="role-chip active" id="role-employee" data-role="employee">신입</div>
+        <div class="role-chip" id="role-mentor" data-role="mentor">선임자</div>
+      </div>
+      <p class="hint" style="margin-top:-6px;">신입 또는 선임자 버튼을 누른 뒤 칸을 클릭해 수정하면, 누가 고쳤는지 칸 아래 배지로 표시됩니다.</p>
+
+      <div id="weekTabs" class="week-tabs"></div>
+
+      <div class="row-btns" style="margin-top:0;margin-bottom:12px;">
+        <button class="btn btn-ghost" id="resetBtn" style="display:none;">이 주 수정 초기화</button>
+      </div>
+
+      <div id="gridArea">
+        <div class="empty-msg">왼쪽에서 문서를 업로드하고 "일정표 생성"을 눌러보세요.</div>
+      </div>
+
+      <div id="overflowArea"></div>
+      <div id="mailArea"></div>
+      <div id="laterArea"></div>
+
+      <div id="errorBox" class="error" style="display:none;"></div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const SLOTS = ["09:00-10:00","10:00-12:00","13:00-15:00","15:00-17:00","17:00-18:00"];
+const SLOT_RANGES = [[540,600],[600,720],[780,900],[900,1020],[1020,1080]]; // minutes from midnight
+
+let files = { meeting:[], calendar:[], email:[] };
+let fileIdCounter = 0;
+
+let originalWeeks = null; // parsed, immutable
+let workingWeeks = null;  // editable copy
+let weekOrder = [];
+let currentWeekKey = null;
+let currentRole = 'employee'; // 'employee' | 'mentor'
+
+const el = id => document.getElementById(id);
+const escapeHtml = s => (s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+function showError(msg){ el('errorBox').style.display='block'; el('errorBox').textContent = msg; }
+function clearError(){ el('errorBox').style.display='none'; }
+
+/* ---------------- 파일 업로드 UI ---------------- */
+
+function renderFileList(target){
+  const wrap = el('fileList-'+target);
+  wrap.innerHTML = '';
+  files[target].forEach(d=>{
+    const row = document.createElement('div');
+    row.className = 'file-item';
+    const statusText = d.status === 'loading' ? '읽는 중…' : d.status === 'ok' ? '완료' : '실패';
+    const statusClass = d.status === 'ok' ? 'ok' : d.status === 'err' ? 'err' : '';
+    row.innerHTML = `<span class="fname">${escapeHtml(d.name)}</span><span class="fstatus ${statusClass}">${statusText}</span><span class="fremove" data-id="${d.id}">✕</span>`;
+    row.querySelector('.fremove').onclick = () => {
+      files[target] = files[target].filter(x => x.id !== d.id);
+      renderFileList(target);
+    };
+    wrap.appendChild(row);
+  });
+}
+
+async function handleFiles(target, fileListRaw, single){
+  const arr = Array.from(fileListRaw);
+  if(single){ files[target] = []; }
+  for(const file of arr){
+    const doc = { id: ++fileIdCounter, name: file.name, status: 'loading', raw:null };
+    files[target].push(doc);
+    renderFileList(target);
+    try{
+      const buf = await file.arrayBuffer();
+      const res = await mammoth.extractRawText({ arrayBuffer: buf });
+      doc.raw = res.value;
+      doc.status = 'ok';
+    }catch(err){
+      doc.status = 'err';
+      showError(`${file.name} 처리 실패: ${err.message}`);
+    }
+    renderFileList(target);
+  }
+}
+
+document.querySelectorAll('.dropzone').forEach(dz=>{
+  const target = dz.dataset.target;
+  const input = document.querySelector(`.fileInput[data-target="${target}"]`);
+  const single = !input.multiple;
+  dz.addEventListener('click', ()=> input.click());
+  input.addEventListener('change', e=>{ handleFiles(target, e.target.files, single); input.value=''; });
+  ['dragenter','dragover'].forEach(evt=> dz.addEventListener(evt, e=>{ e.preventDefault(); dz.classList.add('drag'); }));
+  ['dragleave','drop'].forEach(evt=> dz.addEventListener(evt, e=>{ e.preventDefault(); dz.classList.remove('drag'); }));
+  dz.addEventListener('drop', e=>{ if(e.dataTransfer.files.length) handleFiles(target, e.dataTransfer.files, single); });
+});
+
+document.querySelectorAll('.role-chip').forEach(chip=>{
+  chip.addEventListener('click', ()=>{
+    currentRole = chip.dataset.role;
+    document.querySelectorAll('.role-chip').forEach(c=>c.classList.remove('active','mentor'));
+    chip.classList.add('active');
+    if(currentRole === 'mentor') chip.classList.add('mentor');
+  });
+});
+
+/* ---------------- 날짜/시간 유틸 ---------------- */
+
+function normalizeDate(v){
+  if(v instanceof Date && !isNaN(v)){
+    const y=v.getFullYear(), m=String(v.getMonth()+1).padStart(2,'0'), d=String(v.getDate()).padStart(2,'0');
+    return `${y}-${m}-${d}`;
+  }
+  if(typeof v === 'string'){
+    let m = v.match(/(\d{4})-(\d{1,2})-(\d{1,2})/);
+    if(m) return `${m[1]}-${String(m[2]).padStart(2,'0')}-${String(m[3]).padStart(2,'0')}`;
+    m = v.match(/^(\d{1,2})\/(\d{1,2})$/);
+    if(m) return `2026-${String(m[1]).padStart(2,'0')}-${String(m[2]).padStart(2,'0')}`;
+  }
+  return null;
+}
+
+function timeToMinutes(hhmm){
+  const m = (hhmm||'').match(/(\d{1,2}):(\d{2})/);
+  if(!m) return null;
+  return (+m[1])*60 + (+m[2]);
+}
+
+function slotIndexForTime(hhmm){
+  const min = timeToMinutes(hhmm);
+  if(min===null) return 0;
+  for(let i=0;i<SLOT_RANGES.length;i++){
+    if(min >= SLOT_RANGES[i][0] && min < SLOT_RANGES[i][1]) return i;
+  }
+  if(min < SLOT_RANGES[0][0]) return 0;
+  return SLOT_RANGES.length-1;
+}
+
+function weekKeyOf(dateStr){
+  const d = new Date(dateStr+'T00:00:00');
+  const day = d.getDay(); // 0=Sun
+  const diffToMon = (day===0? -6 : 1-day);
+  const mon = new Date(d); mon.setDate(d.getDate()+diffToMon);
+  return mon.toISOString().slice(0,10);
+}
+function weekLabelOf(weekKey){
+  const mon = new Date(weekKey+'T00:00:00');
+  const fri = new Date(mon); fri.setDate(mon.getDate()+4);
+  const f = d => `${d.getMonth()+1}/${d.getDate()}`;
+  return `${f(mon)} ~ ${f(fri)}`;
+}
+function weekdaysOf(weekKey){
+  const mon = new Date(weekKey+'T00:00:00');
+  const out = [];
+  const names = ['월요일','화요일','수요일','목요일','금요일'];
+  for(let i=0;i<5;i++){
+    const d = new Date(mon); d.setDate(mon.getDate()+i);
+    out.push({ date: d.toISOString().slice(0,10), name: names[i], label: `${d.getMonth()+1}/${d.getDate()}` });
+  }
+  return out;
+}
+
+/* ---------------- 내장 데이터 (01~04 엑셀 내용을 코드에 미리 반영) ---------------- */
+// 회의록/캘린더/메일 문서만 업로드해도 동일한 결과가 나오도록,
+// 01~04 엑셀에 있던 내용을 그대로 코드 안에 옮겨두었습니다.
+// (실제 서비스라면 이 부분도 업로드/DB 연동으로 대체할 수 있습니다)
+
+const EMBEDDED_SCHEDULE_TASKS = [
+  { date:"2026-09-01", title:"최종 점검보고서 제출", priority:"긴급", nextAction:"누락 사진 3장 확인 → 팀장 검토 → 고객사 제출", note:"오전 중 제출 권장", source:"업무일정 엑셀" },
+  { date:"2026-09-02", title:"감지기 교체 견적 회신", priority:"상", nextAction:"한빛전기 단가 회신 확인 후 견적서 최종 작성", note:"협력사 회신 대기", source:"업무일정 엑셀" },
+  { date:"2026-09-03", title:"고객사 정기회의 참석", priority:"상", nextAction:"회의 전 미조치 2건 및 사진자료 정리", note:"회의 14:00", source:"업무일정 엑셀" },
+  { date:"2026-09-04", title:"주간 미완료 업무 점검", priority:"중", nextAction:"미완료 보고서/견적/고객 요청 목록 업데이트", note:"매주 금요일 반복", source:"업무일정 엑셀" },
+  { date:"2026-09-07", title:"공용드라이브 권한 이관 요청", priority:"상", nextAction:"팀장 승인 후 이서연 계정에 편집권한 부여 요청", note:"외부공유 권한 제외", source:"업무일정 엑셀" },
+  { date:"2026-09-08", title:"월간 점검 일정 확정", priority:"중", nextAction:"현장팀 일정 취합 후 9월 점검표 확정", note:"현장팀 3명 일정 확인 필요", source:"업무일정 엑셀" },
+  { date:"2026-09-10", title:"D물류센터 사전자료 요청", priority:"중", nextAction:"도면/설비목록/이전 점검결과 요청 메일 발송", note:"신규 인계 후 첫 신규 현장", source:"업무일정 엑셀" },
+];
+
+const EMBEDDED_PROJECT_DEADLINE_TASKS = [
+  { date:"2026-09-01", title:"[마감] A동 소방시설 정기점검", priority:"상", nextAction:"누락 사진 3장 확인 후 최종 제출", note:"사진 누락 시 제출 지연 가능", source:"프로젝트 진행현황 엑셀" },
+  { date:"2026-09-02", title:"[마감] B공장 감지기 교체", priority:"상", nextAction:"협력사 단가 반영 후 견적 회신", note:"단가 지연 시 고객 회신 지연", source:"프로젝트 진행현황 엑셀" },
+  { date:"2026-09-03", title:"[마감] C센터 종합정밀점검", priority:"상", nextAction:"9/3 회의에서 미조치 2건 일정 확정", note:"미조치 2건 일정 미확정", source:"프로젝트 진행현황 엑셀" },
+  { date:"2026-09-10", title:"[마감] D물류센터 신규점검", priority:"상", nextAction:"사전자료 요청 및 현장 일정 협의", note:"자료 미수신 시 현장 준비 지연", source:"프로젝트 진행현황 엑셀" },
+];
+
+const EMBEDDED_ASSET_DEADLINE_TASKS = [
+  { date:"2026-09-07", title:"[마감] 공용드라이브 Z: 인계", priority:"상", nextAction:"팀장 승인 후 IT 요청", note:"외부 공유 권한은 부여하지 않음", source:"계정·권한·자산 엑셀" },
+  { date:"2026-09-04", title:"[마감] 고객요청 관리 엑셀 인계", priority:"상", nextAction:"최신 파일 경로 전달", note:"중복본 사용 금지", source:"계정·권한·자산 엑셀" },
+  { date:"2026-09-07", title:"[마감] A동 현장 폴더 인계", priority:"상", nextAction:"공용드라이브 권한과 함께 이관", note:"보고서 최종본 폴더 확인", source:"계정·권한·자산 엑셀" },
+  { date:"2026-09-04", title:"[마감] 법인 태블릿 2번 인계", priority:"상", nextAction:"자산대장 서명 후 인계", note:"충전기 포함", source:"계정·권한·자산 엑셀" },
+];
+
+const EMBEDDED_PROJECT_OVERVIEW = [
+  { title:"[개요] A동 소방시설 정기점검 현황 파악", detail:"보고서 최종화 · 진행률 80% · 다음액션: 누락 사진 3장 확인 후 최종 제출", badge:"개요", source:"프로젝트 진행현황 엑셀" },
+  { title:"[개요] B공장 감지기 교체 현황 파악", detail:"견적 작성 · 진행률 60% · 다음액션: 협력사 단가 반영 후 견적 회신", badge:"개요", source:"프로젝트 진행현황 엑셀" },
+  { title:"[개요] C센터 종합정밀점검 현황 파악", detail:"후속조치 협의 · 진행률 30% · 다음액션: 9/3 회의에서 미조치 2건 일정 확정", badge:"개요", source:"프로젝트 진행현황 엑셀" },
+  { title:"[개요] D물류센터 신규점검 현황 파악", detail:"사전준비 · 진행률 10% · 다음액션: 사전자료 요청 및 현장 일정 협의", badge:"개요", source:"프로젝트 진행현황 엑셀" },
+];
+
+const EMBEDDED_ASSET_OVERVIEW = [
+  { title:"[개요] 공용드라이브 Z: 인계 상태 확인", detail:"상태: 인계예정 · 인계방법: 팀장 승인 후 IT 요청 · 주의사항: 외부 공유 권한은 부여하지 않음", badge:"개요", source:"계정·권한·자산 엑셀" },
+  { title:"[개요] 고객요청 관리 엑셀 인계 상태 확인", detail:"상태: 미완료 · 인계방법: 최신 파일 경로 전달 · 주의사항: 중복본 사용 금지", badge:"개요", source:"계정·권한·자산 엑셀" },
+  { title:"[개요] 사내 IT요청 포털 인계 상태 확인", detail:"상태: 완료 · 인계방법: 개인 계정 직접 로그인 · 주의사항: 비밀번호 공유 금지", badge:"개요", source:"계정·권한·자산 엑셀" },
+  { title:"[개요] A동 현장 폴더 인계 상태 확인", detail:"상태: 인계예정 · 인계방법: 공용드라이브 권한과 함께 이관 · 주의사항: 보고서 최종본 폴더 확인", badge:"개요", source:"계정·권한·자산 엑셀" },
+  { title:"[개요] 법인 태블릿 2번 인계 상태 확인", detail:"상태: 미완료 · 인계방법: 자산대장 서명 후 인계 · 주의사항: 충전기 포함", badge:"개요", source:"계정·권한·자산 엑셀" },
+];
+
+const EMBEDDED_CONTACTS = [
+  { title:"박현우(부장, 세림관리) 컨택포인트 파악", detail:"관련 업무: A동 점검보고서 · 유의사항: 보고서 전달 전 전화로 먼저 안내. 오전 11시 이전 연락 선호.", badge:"소개", source:"담당자 연락망 엑셀" },
+  { title:"최은지(대리, B공장 시설팀) 컨택포인트 파악", detail:"관련 업무: B공장 견적/교체 일정 · 유의사항: 메일 제목에 [B공장] 표기. 견적 수정사항은 표로 정리.", badge:"소개", source:"담당자 연락망 엑셀" },
+  { title:"조민석(과장, 한빛전기) 컨택포인트 파악", detail:"관련 업무: 감지기 단가/납기 · 유의사항: 급한 건 전화, 일반 단가 문의는 문자 가능.", badge:"소개", source:"담당자 연락망 엑셀" },
+  { title:"오세훈(과장, C센터 시설팀) 컨택포인트 파악", detail:"관련 업무: C센터 후속조치 · 유의사항: 회의자료는 전날 17시까지 공유.", badge:"소개", source:"담당자 연락망 엑셀" },
+  { title:"박지훈(대리, 현장점검팀) 컨택포인트 파악", detail:"관련 업무: 현장 사진/점검결과 · 유의사항: 사진 누락 확인은 박지훈 대리에게 요청.", badge:"소개", source:"담당자 연락망 엑셀" },
+  { title:"한유리(사원, 영업팀) 컨택포인트 파악", detail:"관련 업무: 견적/고객 요청 · 유의사항: 견적 금액 변경 시 반드시 공유.", badge:"소개", source:"담당자 연락망 엑셀" },
+];
+
+/* ---------------- DOCX(텍스트) 파싱 ---------------- */
+
+function splitLines(rawText){
+  return rawText.split('\n').map(s=>s.trim()).filter(Boolean);
+}
+
+// 캘린더 문서: 표 헤더 "날짜","시간","일정","내용" 다음에 4개씩 데이터가 이어지는 구조
+function parseCalendarDocx(rawText){
+  const lines = splitLines(rawText);
+  let start = -1;
+  for(let i=0;i<lines.length-3;i++){
+    if(lines[i]==='날짜' && lines[i+1]==='시간' && lines[i+2]==='일정' && lines[i+3]==='내용'){ start = i+4; break; }
+  }
+  const events = [];
+  if(start<0) return events;
+  for(let i=start;i+3<lines.length;i+=4){
+    const [dateStr, timeStr, title, detail] = lines.slice(i,i+4);
+    const date = normalizeDate(dateStr);
+    if(!date) break;
+    const tm = timeStr.match(/(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})/);
+    events.push({
+      date,
+      start: tm ? tm[1] : null,
+      end: tm ? tm[2] : null,
+      allDay: !tm,
+      title,
+      detail,
+      source: '캘린더 문서',
+    });
+  }
+  return events;
+}
+
+// 회의록 문서: "일시" 다음줄에 "YYYY-MM-DD HH:MM-HH:MM", 첫 줄이 제목
+function parseMeetingDocx(rawText, filename){
+  const lines = splitLines(rawText);
+  if(!lines.length) return null;
+  const title = lines[0];
+  let dtLine = null, place='', attendees='';
+  for(let i=0;i<lines.length;i++){
+    if(lines[i]==='일시' && lines[i+1]) dtLine = lines[i+1];
+    if(lines[i]==='장소' && lines[i+1]) place = lines[i+1];
+    if(lines[i]==='참석자' && lines[i+1]) attendees = lines[i+1];
+  }
+  if(!dtLine) return null;
+  const m = dtLine.match(/(\d{4}-\d{2}-\d{2})\s+(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})/);
+  if(!m) return null;
+  return {
+    date: normalizeDate(m[1]),
+    start: m[2], end: m[3],
+    allDay:false,
+    title,
+    detail: `참석: ${attendees}${place? ' · 장소: '+place : ''}`,
+    source: '회의록 (' + filename + ')',
+  };
+}
+
+// 메일 문서: 참고용 — 제목/받는사람/일시만 추출
+function parseEmailDocx(rawText, filename){
+  const lines = splitLines(rawText);
+  let subject='', to='', dt='';
+  for(let i=0;i<lines.length;i++){
+    if(lines[i]==='제목' && lines[i+1]) subject = lines[i+1];
+    if(lines[i]==='받는사람' && lines[i+1]) to = lines[i+1];
+    if(lines[i]==='일시' && lines[i+1]) dt = lines[i+1];
+  }
+  const date = normalizeDate(dt);
+  if(!subject) return null;
+  return { date, subject, to, raw: dt, source: filename };
+}
+
+/* ---------------- 일정표 생성 ---------------- */
+
+function buildSchedule(){
+  const scheduleTasks = [ ...EMBEDDED_SCHEDULE_TASKS, ...EMBEDDED_PROJECT_DEADLINE_TASKS, ...EMBEDDED_ASSET_DEADLINE_TASKS ];
+  const timedEvents = [];
+  const mailRefs = [];
+
+  files.calendar.filter(f=>f.status==='ok').forEach(f => {
+    parseCalendarDocx(f.raw).forEach(ev => {
+      if(ev.allDay){
+        scheduleTasks.push({ date:ev.date, title:ev.title, project:'', owner:'', status:'', priority:'상', nextAction: ev.detail, note:'', source: ev.source });
+      } else {
+        timedEvents.push(ev);
+      }
+    });
+  });
+
+  files.meeting.filter(f=>f.status==='ok').forEach(f => {
+    const ev = parseMeetingDocx(f.raw, f.name);
+    if(ev) timedEvents.push(ev);
+  });
+
+  files.email.filter(f=>f.status==='ok').forEach(f => {
+    const m = parseEmailDocx(f.raw, f.name);
+    if(m) mailRefs.push(m);
+  });
+
+  if(scheduleTasks.length===0 && timedEvents.length===0){
+    return null;
+  }
+
+  const priorityRank = { '긴급':0, '상':1, '중':2, '하':3, '':2 };
+  scheduleTasks.sort((a,b) => (priorityRank[a.priority]??2) - (priorityRank[b.priority]??2));
+
+  // 같은 날짜+같은 시작시간의 일정은 캘린더/회의록 등 여러 문서에 중복 기록된 것으로 보고 하나만 사용
+  const seenEventKeys = new Set();
+  const dedupedEvents = [];
+  timedEvents.forEach(ev => {
+    const key = ev.date + '|' + (ev.start || 'allday');
+    if(seenEventKeys.has(key)) return;
+    seenEventKeys.add(key);
+    dedupedEvents.push(ev);
+  });
+
+  const tasksByDate = {};
+  scheduleTasks.forEach(t => { (tasksByDate[t.date] = tasksByDate[t.date]||[]).push(t); });
+  const eventsByDate = {};
+  dedupedEvents.forEach(e => { (eventsByDate[e.date] = eventsByDate[e.date]||[]).push(e); });
+  const mailByDate = {};
+  mailRefs.forEach(m => { if(m.date) (mailByDate[m.date] = mailByDate[m.date]||[]).push(m); });
+
+  const allDates = Array.from(new Set([...Object.keys(tasksByDate), ...Object.keys(eventsByDate)])).sort();
+
+  // 실제 달력 날짜가 아니라 "1주차/2주차" 온보딩 개념이므로, 문서에서 발견된 날짜를
+  // 시간순으로 최대 2개 주(캘린더 주 단위)까지만 사용하고 나머지는 별도로 남겨둔다.
+  const weekKeysInOrder = Array.from(new Set(allDates.map(weekKeyOf))).sort();
+  const usedWeekKeys = weekKeysInOrder.slice(0, 2);
+  const week1Key = usedWeekKeys[0];
+  const week2Key = usedWeekKeys[1];
+  const laterDates = allDates.filter(d => !usedWeekKeys.includes(weekKeyOf(d)));
+
+  const DAY_NAMES = ['월','화','수','목','금'];
+  const weeks = {};
+
+  function emptySlots(){
+    return SLOTS.map(s => ({ slot:s, type:'empty', task:'', detail:'', badge:'', source:'', edited:false, editedBy:null }));
+  }
+  function placeIntoDay(dayObj, item){
+    const freeIdx = dayObj.slots.findIndex(s => s.type==='empty');
+    if(freeIdx>=0){
+      dayObj.slots[freeIdx] = { slot:SLOTS[freeIdx], type:'task', task:item.title, detail:item.detail||'', badge:item.badge||'', source:item.source||'', edited:false, editedBy:null };
+      return true;
+    }
+    dayObj.overflow.push(`${item.title} — ${item.source||''}`);
+    return false;
+  }
+
+  // ---------- 2주차 (있는 경우): 실제 날짜에 있는 항목만 반영, 빈 칸은 그대로 둠 ----------
+  if(week2Key){
+    weeks[week2Key] = { label: '2주차', days:{}, mail:{} };
+    allDates.forEach(date => {
+      if(weekKeyOf(date) !== week2Key) return;
+      const d = new Date(date+'T00:00:00');
+      const dayIdx = d.getDay() - 1;
+      if(dayIdx < 0 || dayIdx > 4) return;
+      const dayName = DAY_NAMES[dayIdx];
+      if(!weeks[week2Key].days[dayName]) weeks[week2Key].days[dayName] = { slots: emptySlots(), overflow: [] };
+      const dayObj = weeks[week2Key].days[dayName];
+
+      (eventsByDate[date]||[]).forEach(ev => {
+        const idx = slotIndexForTime(ev.start);
+        if(dayObj.slots[idx].type==='empty'){
+          dayObj.slots[idx] = { slot:SLOTS[idx], type:'event', task:`${ev.start}-${ev.end} ${ev.title}`, detail: ev.detail||'', badge:'', source: ev.source, edited:false, editedBy:null };
+        } else {
+          dayObj.overflow.push(`(추가 일정) ${ev.start}-${ev.end} ${ev.title} — ${ev.source}`);
+        }
+      });
+      (tasksByDate[date]||[]).forEach(t => {
+        placeIntoDay(dayObj, { title:t.title, detail: t.nextAction ? `다음 조치: ${t.nextAction}` : (t.note||''), badge:t.priority, source:t.source });
+      });
+      if(mailByDate[date]) weeks[week2Key].mail[dayName] = (weeks[week2Key].mail[dayName]||[]).concat(mailByDate[date]);
+    });
+  }
+
+  // ---------- 1주차: 업로드된 모든 문서 내용을 최대한 빼곡하게 채운 "초안" ----------
+  if(week1Key){
+    weeks[week1Key] = { label: '1주차', days:{}, mail:{} };
+    DAY_NAMES.forEach(dn => { weeks[week1Key].days[dn] = { slots: emptySlots(), overflow: [] }; });
+
+    // 1) 실제로 시간이 정해진 회의/캘린더 일정은 그대로 고정 배치 (진짜 약속이므로)
+    allDates.forEach(date => {
+      if(weekKeyOf(date) !== week1Key) return;
+      const d = new Date(date+'T00:00:00');
+      const dayIdx = d.getDay() - 1;
+      if(dayIdx < 0 || dayIdx > 4) return;
+      const dayName = DAY_NAMES[dayIdx];
+      const dayObj = weeks[week1Key].days[dayName];
+      (eventsByDate[date]||[]).forEach(ev => {
+        const idx = slotIndexForTime(ev.start);
+        if(dayObj.slots[idx].type==='empty'){
+          dayObj.slots[idx] = { slot:SLOTS[idx], type:'event', task:`${ev.start}-${ev.end} ${ev.title}`, detail: ev.detail||'', badge:'', source: ev.source, edited:false, editedBy:null };
+        }
+      });
+      if(mailByDate[date]) weeks[week1Key].mail[dayName] = (weeks[week1Key].mail[dayName]||[]).concat(mailByDate[date]);
+    });
+
+    // 2) 문서 전체 내용을 "학습 풀"로 모아서 남은 칸을 순서대로 채운다
+    const pool = [];
+    pool.push(...EMBEDDED_PROJECT_OVERVIEW);
+    EMBEDDED_SCHEDULE_TASKS.forEach(t => pool.push({
+      title: `실습: ${t.title}`,
+      detail: t.nextAction ? `다음 조치: ${t.nextAction}` : (t.note||''),
+      badge: '실습', source: t.source,
+    }));
+    pool.push(...EMBEDDED_ASSET_OVERVIEW);
+    pool.push(...EMBEDDED_CONTACTS);
+    mailRefs.forEach(m => pool.push({
+      title: `메일 확인: ${m.subject}`,
+      detail: `수신: ${m.to}${m.raw ? ' · '+m.raw : ''}`,
+      badge: '메일', source: `메일 문서(${m.source})`,
+    }));
+
+    let pi = 0;
+    DAY_NAMES.forEach(dn => {
+      const dayObj = weeks[week1Key].days[dn];
+      for(let si=0; si<SLOTS.length; si++){
+        if(dayObj.slots[si].type !== 'empty') continue;
+        if(pi >= pool.length) break;
+        placeIntoDay(dayObj, pool[pi]);
+        pi++;
+      }
+    });
+    // 칸을 다 채우고도 남은 항목은 오늘 못 다룬 참고 자료로 남겨둔다
+    if(pi < pool.length){
+      weeks[week1Key].days['금'].overflow.push(...pool.slice(pi).map(p => `${p.title} — ${p.source||''}`));
+    }
+  }
+
+  return { weeks, laterDates, weekOrder: [week1Key, week2Key].filter(Boolean) };
+}
+
+function deepCopy(obj){ return JSON.parse(JSON.stringify(obj)); }
+
+function generate(){
+  clearError();
+  const result = buildSchedule();
+  if(!result){
+    showError('일정표를 만들지 못했습니다. 페이지를 새로고침한 뒤 다시 시도해주세요.');
+    return;
+  }
+  originalWeeks = result.weeks;
+  workingWeeks = deepCopy(result.weeks);
+  weekOrder = result.weekOrder;
+  currentWeekKey = weekOrder[0];
+  renderWeekTabs();
+  renderWeek(currentWeekKey);
+  renderLaterNote(result.laterDates);
+}
+
+function renderLaterNote(laterDates){
+  const host = el('laterArea');
+  if(!laterDates || !laterDates.length){ host.innerHTML=''; return; }
+  host.innerHTML = `<div class="overflow-box"><h4>1~2주차 이후로 밀린 일정 (${laterDates.length}건, 표에는 반영되지 않음)</h4><div class="hint">문서에 포함된 날짜 중 처음 2개 주차 범위를 벗어난 항목입니다. 3주차 일과표가 필요하면 알려주세요.</div></div>`;
+}
+
+function renderWeekTabs(){
+  const wrap = el('weekTabs');
+  wrap.innerHTML = '';
+  weekOrder.forEach(wk => {
+    const tab = document.createElement('div');
+    tab.className = 'week-tab' + (wk===currentWeekKey ? ' active':'');
+    tab.textContent = workingWeeks[wk].label;
+    tab.onclick = () => { currentWeekKey = wk; renderWeekTabs(); renderWeek(wk); };
+    wrap.appendChild(tab);
+  });
+}
+
+const DAY_NAMES_FULL = { '월':'월요일', '화':'화요일', '수':'수요일', '목':'목요일', '금':'금요일' };
+
+function renderWeek(wk){
+  const weekData = workingWeeks[wk];
+  const dayKeys = ['월','화','수','목','금'];
+  el('resetBtn').style.display = 'inline-block';
+
+  let html = '<div class="grid-wrap"><table class="sched"><thead><tr><th></th>';
+  dayKeys.forEach(dk => html += `<th>${DAY_NAMES_FULL[dk]}</th>`);
+  html += '</tr></thead><tbody>';
+
+  SLOTS.forEach((slot, si) => {
+    html += `<tr><td class="timecol">${slot}</td>`;
+    dayKeys.forEach(dk => {
+      const dayEntry = weekData.days[dk];
+      const cellData = dayEntry ? dayEntry.slots[si] : { type:'empty', task:'', detail:'', badge:'', source:'', edited:false };
+      const cls = cellData.type;
+      html += `<td class="cell"><div class="cell-inner ${cls}" data-day="${dk}" data-slotidx="${si}">`;
+      if(cellData.type==='empty'){
+        html += `<div>여유 시간</div>`;
+      } else {
+        html += `<div class="cell-task" contenteditable="true" spellcheck="false">${escapeHtml(cellData.task)}</div>`;
+        if(cellData.detail) html += `<div class="cell-reason">${escapeHtml(cellData.detail)}</div>`;
+        if(cellData.badge) html += `<span class="cell-badge pri-${escapeHtml(cellData.badge)}">${escapeHtml(cellData.badge)}</span>`;
+        if(cellData.editedBy) html += `<span class="cell-badge edited ${cellData.editedBy}">✎ ${cellData.editedBy==='mentor'?'선임자':'신입'} 수정</span>`;
+        if(cellData.source) html += `<div class="cell-reason" style="opacity:0.7;">출처: ${escapeHtml(cellData.source)}</div>`;
+      }
+      html += `</div></td>`;
+    });
+    html += '</tr>';
+    if(slot === '10:00-12:00'){
+      html += `<tr class="lunch"><td class="timecol">12:00-13:00</td>`;
+      dayKeys.forEach(()=> html += `<td class="cell"><div class="cell-inner">점심시간</div></td>`);
+      html += `</tr>`;
+    }
+  });
+
+  html += '</tbody></table></div>';
+  el('gridArea').innerHTML = html;
+
+  // overflow
+  const overflowLines = [];
+  dayKeys.forEach(dk => {
+    const dayEntry = weekData.days[dk];
+    if(dayEntry && dayEntry.overflow.length){
+      dayEntry.overflow.forEach(line => overflowLines.push(`${DAY_NAMES_FULL[dk]}: ${line}`));
+    }
+  });
+  el('overflowArea').innerHTML = overflowLines.length
+    ? `<div class="overflow-box"><h4>이번 주 시간표에 다 못 들어간 항목</h4><ul>${overflowLines.map(l=>`<li>${escapeHtml(l)}</li>`).join('')}</ul></div>`
+    : '';
+
+  // mail refs
+  const mailLines = [];
+  dayKeys.forEach(dk => {
+    (weekData.mail[dk]||[]).forEach(m => mailLines.push(`${DAY_NAMES_FULL[dk]} · ${m.raw||''} · ${m.subject} → ${m.to}`));
+  });
+  el('mailArea').innerHTML = mailLines.length
+    ? `<details class="mail-box"><summary>참고: 이번 주 관련 메일 ${mailLines.length}건</summary>${mailLines.map(l=>`<div class="mail-item">${escapeHtml(l)}</div>`).join('')}</details>`
+    : '';
+}
+
+el('gridArea').addEventListener('input', e=>{
+  const target = e.target;
+  if(!target.classList.contains('cell-task')) return;
+  const cellEl = target.closest('.cell-inner');
+  const dk = cellEl.dataset.day, slotIdx = +cellEl.dataset.slotidx;
+  const dayEntry = workingWeeks[currentWeekKey].days[dk];
+  if(!dayEntry) return;
+  dayEntry.slots[slotIdx].task = target.textContent.trim();
+  dayEntry.slots[slotIdx].edited = true;
+  dayEntry.slots[slotIdx].editedBy = currentRole;
+  let badge = cellEl.querySelector('.cell-badge.edited');
+  if(!badge){
+    badge = document.createElement('span');
+    badge.className = 'cell-badge edited';
+    cellEl.appendChild(badge);
+  }
+  badge.className = 'cell-badge edited ' + currentRole;
+  badge.textContent = `✎ ${currentRole==='mentor'?'선임자':'신입'} 수정`;
+});
+
+el('resetBtn').addEventListener('click', ()=>{
+  if(!originalWeeks || !currentWeekKey) return;
+  workingWeeks[currentWeekKey] = deepCopy(originalWeeks[currentWeekKey]);
+  renderWeek(currentWeekKey);
+});
+
+el('genBtn').addEventListener('click', generate);
+</script>
+</body>
+</html>
+'''
+
 
 
 # =========================================================
@@ -500,12 +1248,15 @@ def show_manual_error_report_dialog():
             st.error(f"신고 저장 중 오류가 발생했습니다: {e}")
 
 
-def render_floating_error_button():
-    """화면 오른쪽 아래에 항상 보이는 수동 오류 신고 버튼."""
+def render_floating_error_button(screen, function, key_suffix):
+    """
+    현재 탭 안에 플로팅 오류 신고 버튼을 표시합니다.
+    버튼을 누르면 해당 탭의 화면/기능 정보가 신고서에 자동 반영됩니다.
+    """
     st.markdown(
         """
         <style>
-        .st-key-floating_error_report {
+        [class*="st-key-floating_error_report_"] {
             position: fixed;
             right: 24px;
             bottom: 24px;
@@ -513,7 +1264,7 @@ def render_floating_error_button():
             width: auto !important;
         }
 
-        .st-key-floating_error_report button {
+        [class*="st-key-floating_error_report_"] button {
             border-radius: 999px !important;
             padding: 0.65rem 1rem !important;
             box-shadow: 0 4px 18px rgba(0, 0, 0, 0.20);
@@ -524,12 +1275,15 @@ def render_floating_error_button():
         unsafe_allow_html=True,
     )
 
-    with st.container(key="floating_error_report"):
+    with st.container(key=f"floating_error_report_{key_suffix}"):
         if st.button(
             "⚠️ 오류 신고",
-            key="floating_error_report_button",
-            help="시스템 오류 또는 이상 현상을 신고합니다.",
+            key=f"floating_error_report_button_{key_suffix}",
+            help="현재 화면의 오류 또는 이상 현상을 신고합니다.",
         ):
+            # 신고 버튼이 눌린 '현재 탭'을 정확히 기록
+            st.session_state["last_screen"] = screen
+            st.session_state["last_function"] = function
             show_manual_error_report_dialog()
 
 
@@ -1884,11 +2638,20 @@ project_df = None
 contact_df = None
 asset_df = None
 
-tab_dashboard, tab_excel, tab_qa, tab_memo, tab_manual, tab_error_admin = st.tabs(
+(
+    tab_dashboard,
+    tab_excel,
+    tab_qa,
+    tab_onboarding_schedule,
+    tab_memo,
+    tab_manual,
+    tab_error_admin,
+) = st.tabs(
     [
         "🏠 대시보드",
         "📂 Excel 업무자료",
         "💬 후임자 Q&A",
+        "📅 온보딩 일과표",
         "🤖 업무메모 자동 인수인계",
         "✍️ 직접 작성",
         "🛠 관리자 오류함",
@@ -1900,6 +2663,11 @@ tab_dashboard, tab_excel, tab_qa, tab_memo, tab_manual, tab_error_admin = st.tab
 # TAB 1. Excel 업무자료 업로드
 # =========================================================
 with tab_excel:
+    render_floating_error_button(
+        screen="📂 Excel 업무자료",
+        function="업무자료 업로드 및 자동 분류",
+        key_suffix="excel",
+    )
     st.header("📂 업무자료 통합 업로드")
 
     st.info(
@@ -2040,6 +2808,11 @@ with tab_excel:
 # TAB 2. 후임자 대시보드
 # =========================================================
 with tab_dashboard:
+    render_floating_error_button(
+        screen="🏠 대시보드",
+        function="후임자 업무 대시보드",
+        key_suffix="dashboard",
+    )
     show_handover_dashboard(
         schedule_df,
         project_df,
@@ -2052,6 +2825,11 @@ with tab_dashboard:
 # TAB 2. 후임자 Q&A
 # =========================================================
 with tab_qa:
+    render_floating_error_button(
+        screen="💬 후임자 Q&A",
+        function="후임자 질문 검색",
+        key_suffix="qa",
+    )
     st.header("💬 후임자 Q&A")
 
     st.caption(
@@ -2257,8 +3035,42 @@ with tab_qa:
 
 # =========================================================
 # TAB 2. 업무메모 자동 인수인계
+
+# =========================================================
+# TAB. 후임자 온보딩 일과표 자동 생성기 (팀원 기능 통합)
+# =========================================================
+with tab_onboarding_schedule:
+    render_floating_error_button(
+        screen="📅 온보딩 일과표",
+        function="온보딩 일과표 생성 및 수정",
+        key_suffix="onboarding",
+    )
+    st.header("📅 후임자 온보딩 일과표")
+    st.caption(
+        "팀원이 제작한 일정표 자동 생성 모듈을 Streamlit 안에 통합했습니다. "
+        "회의록·캘린더·메일 DOCX를 업로드하면 1주차와 2주차 온보딩 일과표를 자동 생성합니다."
+    )
+
+    st.info(
+        "💡 **사용 방법:** 아래 화면에서 회의록(.docx) 여러 개, "
+        "캘린더 문서(.docx) 1개, 메일(.docx) 여러 개를 넣고 "
+        "**일정표 생성**을 누르세요. 생성된 일정의 업무명은 화면에서 직접 수정할 수 있습니다."
+    )
+
+    components.html(
+        ONBOARDING_SCHEDULE_HTML,
+        height=1450,
+        scrolling=True,
+    )
+
+
 # =========================================================
 with tab_memo:
+    render_floating_error_button(
+        screen="🤖 업무메모 자동 인수인계",
+        function="업무메모 자동 인수인계",
+        key_suffix="memo",
+    )
     st.header("🤖 업무메모 자동 인수인계")
 
     uploaded_memo = st.file_uploader(
@@ -2851,6 +3663,11 @@ with tab_memo:
 # TAB 3. 직접 작성
 # =========================================================
 with tab_manual:
+    render_floating_error_button(
+        screen="✍️ 직접 작성",
+        function="인수인계서 직접 작성",
+        key_suffix="manual",
+    )
     st.header(
         "✍️ 인수인계서 직접 작성"
     )
@@ -3362,6 +4179,11 @@ with tab_manual:
 # 관리자 오류함
 # =========================================================
 with tab_error_admin:
+    render_floating_error_button(
+        screen="🛠 관리자 오류함",
+        function="오류 신고 관리",
+        key_suffix="error_admin",
+    )
     st.header("🛠 관리자 오류함")
     st.caption(
         "시스템이 자동 감지한 오류·응답 지연 정보를 사용자가 확인 후 전송하면 이곳에 접수됩니다. "
@@ -3461,12 +4283,6 @@ with tab_error_admin:
                         "traceback": selected_report.get("technical_traceback", ""),
                     }
                 )
-
-
-# =========================================================
-# 상시 오류 신고 플로팅 버튼
-# =========================================================
-render_floating_error_button()
 
 
 # =========================================================
