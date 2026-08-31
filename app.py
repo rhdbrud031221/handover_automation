@@ -1,4 +1,5 @@
 import io
+import inspect
 import json
 import re
 import time
@@ -199,6 +200,7 @@ ONBOARDING_SCHEDULE_HTML = r'''<!DOCTYPE html>
 
       <div class="row-btns" style="margin-top:0;margin-bottom:12px;">
         <button class="btn btn-ghost" id="resetBtn" style="display:none;">이 주 수정 초기화</button>
+        <button class="btn btn-primary" id="exportBtn" style="display:none;">최종 일정 저장(JSON)</button>
       </div>
 
       <div id="gridArea">
@@ -650,6 +652,7 @@ function generate(){
   renderWeekTabs();
   renderWeek(currentWeekKey);
   renderLaterNote(result.laterDates);
+  el('exportBtn').style.display = 'inline-block';
 }
 
 function renderLaterNote(laterDates){
@@ -758,6 +761,89 @@ el('resetBtn').addEventListener('click', ()=>{
   renderWeek(currentWeekKey);
 });
 
+function exportFinalSchedule(){
+  if(!workingWeeks || !weekOrder.length){
+    showError('먼저 일정표를 생성해주세요.');
+    return;
+  }
+
+  const dayKeys = ['월','화','수','목','금'];
+  const rows = [];
+
+  weekOrder.forEach((wk, weekIndex) => {
+    const weekData = workingWeeks[wk];
+    if(!weekData) return;
+
+    const monday = new Date(wk + 'T00:00:00');
+
+    dayKeys.forEach((dk, dayIndex) => {
+      const dayEntry = weekData.days[dk];
+      if(!dayEntry) return;
+
+      const d = new Date(monday);
+      d.setDate(monday.getDate() + dayIndex);
+      const dateStr = d.toISOString().slice(0,10);
+
+      (dayEntry.slots || []).forEach(slot => {
+        if(!slot || slot.type === 'empty' || !slot.task) return;
+
+        rows.push({
+          week: weekData.label || `${weekIndex+1}주차`,
+          weekKey: wk,
+          date: dateStr,
+          day: dk,
+          time: slot.slot || '',
+          type: slot.type || 'task',
+          task: slot.task || '',
+          detail: slot.detail || '',
+          badge: slot.badge || '',
+          source: slot.source || '',
+          edited: !!slot.edited,
+          editedBy: slot.editedBy || ''
+        });
+      });
+
+      (dayEntry.overflow || []).forEach(item => {
+        rows.push({
+          week: weekData.label || `${weekIndex+1}주차`,
+          weekKey: wk,
+          date: dateStr,
+          day: dk,
+          time: '',
+          type: 'overflow',
+          task: item,
+          detail: '',
+          badge: '',
+          source: '시간표 미배치 항목',
+          edited: false,
+          editedBy: ''
+        });
+      });
+    });
+  });
+
+  const payload = {
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    weekOrder: weekOrder,
+    rows: rows
+  };
+
+  const blob = new Blob(
+    [JSON.stringify(payload, null, 2)],
+    {type:'application/json;charset=utf-8'}
+  );
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = '온보딩_최종일정.json';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+el('exportBtn').addEventListener('click', exportFinalSchedule);
 el('genBtn').addEventListener('click', generate);
 </script>
 </body>
@@ -770,14 +856,98 @@ el('genBtn').addEventListener('click', generate);
 # 0. Streamlit 기본 설정
 # =========================================================
 st.set_page_config(
-    page_title="업무 인수인계 자동화",
+    page_title="업무 인수인계 통합 지원 시스템",
     page_icon="📄",
     layout="wide",
 )
-st.title("📄 업무 인수인계 자동화 시스템")
-st.caption(
-    "API 없이 업무메모와 Excel 업무자료를 정리하고, "
-    "표준 인수인계서(DOCX)를 생성하는 MVP"
+
+# =========================================================
+# 공통 UI 스타일 — 기능 로직에는 영향 없음
+# =========================================================
+st.markdown(
+    """
+    <style>
+    .block-container {
+        max-width: 1500px;
+        padding-top: 2rem;
+        padding-bottom: 4rem;
+    }
+
+    div[data-testid="stTabs"] button[role="tab"] {
+        padding-left: 0.85rem;
+        padding-right: 0.85rem;
+        font-weight: 650;
+    }
+
+    div[data-testid="stButton"] > button {
+        border-radius: 10px;
+    }
+
+    div[data-testid="stFileUploader"],
+    div[data-testid="stDataFrame"],
+    div[data-testid="stMetric"] {
+        border-radius: 12px;
+    }
+
+    .handover-hero {
+        border: 1px solid rgba(128,128,128,0.25);
+        border-radius: 16px;
+        padding: 20px 22px;
+        margin-bottom: 14px;
+        background: rgba(128,128,128,0.06);
+    }
+
+    .handover-hero h1 {
+        font-size: 1.85rem;
+        margin: 0 0 8px 0;
+    }
+
+    .handover-hero p {
+        margin: 0;
+        opacity: 0.78;
+        line-height: 1.6;
+    }
+
+    .flow-strip {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 8px;
+        margin: 10px 0 22px 0;
+    }
+
+    .flow-step {
+        border: 1px solid rgba(128,128,128,0.22);
+        border-radius: 12px;
+        padding: 10px 12px;
+        font-size: 0.88rem;
+        text-align: center;
+        background: rgba(128,128,128,0.04);
+    }
+
+    @media (max-width: 900px) {
+        .flow-strip {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+st.markdown(
+    """
+    <div class="handover-hero">
+      <h1>📄 업무 인수인계 통합 지원 시스템</h1>
+      <p>흩어진 업무자료를 정리하고, 후임자가 업무를 빠르게 이해·검색·실행할 수 있도록 인수인계 전 과정을 한 화면에서 지원합니다.</p>
+    </div>
+    <div class="flow-strip">
+      <div class="flow-step">① 업무자료 통합</div>
+      <div class="flow-step">② 후임자 Q&A</div>
+      <div class="flow-step">③ 온보딩 일과표</div>
+      <div class="flow-step">④ 인수인계서 생성</div>
+    </div>
+    """,
+    unsafe_allow_html=True,
 )
 
 
@@ -786,6 +956,17 @@ st.caption(
 # =========================================================
 ERROR_REPORT_PATH = Path("data/error_reports.jsonl")
 SLOW_RESPONSE_SECONDS = 8.0
+
+SCREEN_FUNCTION_MAP = {
+    "🏠 대시보드": "후임자 업무 대시보드",
+    "📂 Excel 업무자료": "업무자료 업로드 및 자동 분류",
+    "💬 후임자 Q&A": "후임자 질문 검색",
+    "📅 온보딩 일과표": "온보딩 일과표 생성 및 수정",
+    "🤖 업무메모 자동 인수인계": "업무메모 자동 인수인계",
+    "✍️ 직접 작성": "인수인계서 직접 작성",
+    "🛠 관리자 오류함": "오류 신고 관리",
+}
+MAIN_SCREEN_OPTIONS = list(SCREEN_FUNCTION_MAP.keys())
 
 
 def _mask_sensitive_text(value):
@@ -830,6 +1011,8 @@ def init_error_reporting():
         "last_function": "앱 이용",
         "last_input": "",
         "last_response_time": None,
+        "last_input_by_screen": {},
+        "last_response_time_by_screen": {},
         "last_error": None,
         "last_uploaded_files": [],
         "pending_auto_error_dialog": False,
@@ -867,7 +1050,14 @@ def track_action(
     st.session_state["last_function"] = function
 
     if input_value:
-        st.session_state["last_input"] = _mask_sensitive_text(input_value)
+        masked_input = _mask_sensitive_text(input_value)
+        st.session_state["last_input"] = masked_input
+
+        input_by_screen = dict(
+            st.session_state.get("last_input_by_screen", {})
+        )
+        input_by_screen[screen] = masked_input
+        st.session_state["last_input_by_screen"] = input_by_screen
 
 
 def _queue_auto_error_dialog():
@@ -895,6 +1085,12 @@ def record_error(
 
     st.session_state["last_error"] = error_info
     st.session_state["last_response_time"] = response_time
+
+    response_by_screen = dict(
+        st.session_state.get("last_response_time_by_screen", {})
+    )
+    response_by_screen[screen] = response_time
+    st.session_state["last_response_time_by_screen"] = response_by_screen
 
     track_action(
         screen=screen,
@@ -931,6 +1127,12 @@ def record_system_issue(
     st.session_state["last_error"] = error_info
     st.session_state["last_response_time"] = response_time
 
+    response_by_screen = dict(
+        st.session_state.get("last_response_time_by_screen", {})
+    )
+    response_by_screen[screen] = response_time
+    st.session_state["last_response_time_by_screen"] = response_by_screen
+
     track_action(
         screen=screen,
         function=function,
@@ -945,11 +1147,41 @@ def record_system_issue(
 
 
 def build_error_report_draft():
-    logs = st.session_state.get("error_action_logs", [])[-8:]
+    """
+    자동 오류 신고 초안.
+    오류가 발생한 화면과 같은 화면의 입력/응답시간/행동 로그만 사용합니다.
+    """
+    current_screen = st.session_state.get(
+        "last_screen",
+        "화면 미확인",
+    )
+    current_function = st.session_state.get(
+        "last_function",
+        "기능 미확인",
+    )
+
+    all_logs = st.session_state.get("error_action_logs", [])
+    logs = [
+        event
+        for event in all_logs
+        if event.get("screen") == current_screen
+    ][-8:]
+
     last_error = st.session_state.get("last_error") or {}
+
+    input_by_screen = st.session_state.get(
+        "last_input_by_screen",
+        {},
+    )
+    last_input = input_by_screen.get(current_screen, "")
+
+    response_by_screen = st.session_state.get(
+        "last_response_time_by_screen",
+        {},
+    )
     response_time = last_error.get(
         "response_time",
-        st.session_state.get("last_response_time"),
+        response_by_screen.get(current_screen),
     )
 
     action_lines = []
@@ -963,37 +1195,46 @@ def build_error_report_draft():
         action_lines.append(line)
 
     error_code = last_error.get("code", "AUTO_DETECT")
-    error_message = last_error.get("message", "자동 감지된 오류 메시지 없음")
+    error_message = last_error.get(
+        "message",
+        "자동 감지된 오류 메시지 없음",
+    )
 
     summary_parts = [
-        f"{st.session_state.get('last_screen', '화면 미확인')}에서 ",
-        f"{st.session_state.get('last_function', '기능 미확인')} 기능 이용 중 시스템이 오류를 자동 감지했습니다.",
+        f"{current_screen}에서 ",
+        f"{current_function} 기능 이용 중 시스템이 오류를 자동 감지했습니다.",
     ]
 
-    if st.session_state.get("last_input"):
+    if last_input:
         summary_parts.append(
-            f" 최근 입력/검색어는 '{st.session_state['last_input']}'입니다."
+            f" 최근 입력/검색어는 '{last_input}'입니다."
         )
 
     if last_error:
         summary_parts.append(
-            f" 감지된 오류는 {error_code}이며, 메시지는 '{error_message}'입니다."
+            f" 감지된 오류는 {error_code}이며, "
+            f"메시지는 '{error_message}'입니다."
         )
 
     if response_time is not None:
         summary_parts.append(
-            f" 마지막 측정 응답 시간은 {float(response_time):.2f}초입니다."
+            f" 마지막 측정 응답 시간은 "
+            f"{float(response_time):.2f}초입니다."
         )
 
     return {
-        "screen": st.session_state.get("last_screen", "화면 미확인"),
-        "function": st.session_state.get("last_function", "기능 미확인"),
-        "last_input": st.session_state.get("last_input", ""),
+        "screen": current_screen,
+        "function": current_function,
+        "last_input": last_input,
         "response_time": response_time,
         "error_code": error_code,
         "error_type": last_error.get("type", ""),
         "error_message": error_message,
-        "action_history": "\n".join(action_lines) if action_lines else "기록된 최근 동작이 없습니다.",
+        "action_history": (
+            "\n".join(action_lines)
+            if action_lines
+            else "현재 화면에서 기록된 최근 동작이 없습니다."
+        ),
         "auto_summary": "".join(summary_parts),
         "technical_traceback": last_error.get("traceback", ""),
     }
@@ -1133,75 +1374,121 @@ def show_error_report_dialog():
 
 @st.dialog("⚠️ 오류 신고", width="large")
 def show_manual_error_report_dialog():
-    """자동 감지되지 않은 이상 현상을 사용자가 직접 신고할 때 사용하는 팝업."""
-    logs = st.session_state.get("error_action_logs", [])[-8:]
-    action_lines = []
+    """
+    수동 오류 신고 팝업.
+    현재 선택 화면의 기록만 표시하며 다른 탭의 기록은 섞지 않습니다.
+    """
+    tracked_tab = st.session_state.get("main_tabs")
+    fallback_screen = st.session_state.get(
+        "last_screen",
+        "🏠 대시보드",
+    )
 
+    if tracked_tab in MAIN_SCREEN_OPTIONS:
+        default_screen = tracked_tab
+    elif fallback_screen in MAIN_SCREEN_OPTIONS:
+        default_screen = fallback_screen
+    else:
+        default_screen = "🏠 대시보드"
+
+    # 플로팅 버튼 클릭 시 넣어둔 현재 탭 값을 우선 사용
+    selected_screen = st.session_state.get(
+        "manual_report_screen_select",
+        default_screen,
+    )
+    if selected_screen not in MAIN_SCREEN_OPTIONS:
+        selected_screen = default_screen
+
+    default_index = MAIN_SCREEN_OPTIONS.index(selected_screen)
+
+    st.info(
+        "시스템이 자동으로 감지하지 못한 이상 현상이 있다면 직접 신고할 수 있습니다. "
+        "현재 화면의 기록만 자동으로 첨부됩니다."
+    )
+
+    current_screen = st.selectbox(
+        "현재 화면",
+        MAIN_SCREEN_OPTIONS,
+        index=default_index,
+        key="manual_report_screen_select",
+        help="현재 보고 있는 화면이 맞는지 확인해주세요.",
+    )
+    current_function = SCREEN_FUNCTION_MAP[current_screen]
+
+    st.markdown("**최근 사용 기능**")
+    st.code(current_function, language=None)
+
+    input_by_screen = st.session_state.get(
+        "last_input_by_screen",
+        {},
+    )
+    last_input = input_by_screen.get(
+        current_screen,
+        "",
+    )
+
+    response_by_screen = st.session_state.get(
+        "last_response_time_by_screen",
+        {},
+    )
+    last_response_time = response_by_screen.get(
+        current_screen,
+    )
+
+    st.markdown("**최근 입력/검색어**")
+    st.code(
+        last_input or "현재 화면에서 기록된 입력 없음",
+        language=None,
+    )
+
+    if last_response_time is not None:
+        st.caption(
+            f"최근 측정 응답 시간: "
+            f"{float(last_response_time):.2f}초"
+        )
+
+    all_logs = st.session_state.get(
+        "error_action_logs",
+        [],
+    )
+    logs = [
+        event
+        for event in all_logs
+        if event.get("screen") == current_screen
+    ][-8:]
+
+    action_lines = []
     for idx, event in enumerate(logs, start=1):
         line = (
             f"{idx}. [{event.get('time', '')}] "
-            f"{event.get('screen', '')} · {event.get('action', '')}"
+            f"{event.get('screen', '')} · "
+            f"{event.get('action', '')}"
         )
         if event.get("input"):
             line += f" · 입력: {event.get('input', '')}"
         action_lines.append(line)
 
-    current_screen = st.session_state.get("last_screen", "현재 화면")
-    current_function = st.session_state.get("last_function", "앱 이용")
-    last_input = st.session_state.get("last_input", "")
-    last_response_time = st.session_state.get("last_response_time")
-
-    st.info(
-        "시스템이 자동으로 감지하지 못한 이상 현상이 있다면 직접 신고할 수 있습니다. "
-        "최근 화면·기능·입력값·동작 기록은 자동으로 함께 첨부됩니다."
+    st.markdown("**최근 동작 순서**")
+    st.code(
+        "\n".join(action_lines)
+        if action_lines
+        else "현재 화면에서 기록된 최근 동작이 없습니다.",
+        language=None,
     )
-
-    c1, c2 = st.columns(2)
-
-    with c1:
-        st.text_input(
-            "현재 화면",
-            value=current_screen,
-            disabled=True,
-            key="manual_report_screen",
-        )
-
-    with c2:
-        st.text_input(
-            "최근 사용 기능",
-            value=current_function,
-            disabled=True,
-            key="manual_report_function",
-        )
-
-    st.text_input(
-        "최근 입력/검색어",
-        value=last_input or "기록 없음",
-        disabled=True,
-        key="manual_report_input",
-    )
-
-    if last_response_time is not None:
-        st.caption(f"최근 측정 응답 시간: {float(last_response_time):.2f}초")
-
-    if action_lines:
-        st.text_area(
-            "최근 동작 순서",
-            value="\n".join(action_lines),
-            height=150,
-            disabled=True,
-            key="manual_report_actions",
-        )
 
     user_note = st.text_area(
         "어떤 문제가 있었나요?",
-        placeholder="예: 질문하기 버튼을 눌렀는데 답변 내용이 이상하게 표시됐어요.",
+        placeholder=(
+            "예: 일정표 생성 버튼을 눌렀는데 "
+            "결과가 표시되지 않았어요."
+        ),
         height=120,
         key="manual_error_report_note",
     )
 
     st.caption(
-        "🔒 주민등록번호 형태의 값은 신고 저장 전에 자동 마스킹됩니다."
+        "🔒 주민등록번호 형태의 값은 신고 저장 전에 "
+        "자동 마스킹됩니다."
     )
 
     if st.button(
@@ -1215,25 +1502,39 @@ def show_manual_error_report_dialog():
             return
 
         report = {
-            "report_id": "ERR-" + uuid.uuid4().hex[:8].upper(),
-            "reported_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "report_id": (
+                "ERR-" + uuid.uuid4().hex[:8].upper()
+            ),
+            "reported_at": datetime.now().strftime(
+                "%Y-%m-%d %H:%M:%S"
+            ),
             "screen": current_screen,
             "function": current_function,
-            "last_input": _mask_sensitive_text(last_input),
+            "last_input": _mask_sensitive_text(
+                last_input
+            ),
             "response_time": last_response_time,
             "error_code": "USER_REPORT",
             "error_type": "USER_REPORTED_ISSUE",
-            "error_message": _mask_sensitive_text(user_note),
+            "error_message": _mask_sensitive_text(
+                user_note
+            ),
             "action_history": (
                 "\n".join(action_lines)
                 if action_lines
-                else "기록된 최근 동작이 없습니다."
+                else (
+                    "현재 화면에서 기록된 "
+                    "최근 동작이 없습니다."
+                )
             ),
             "auto_summary": (
-                f"{current_screen}에서 {current_function} 기능 사용 중 "
+                f"{current_screen}에서 "
+                f"{current_function} 기능 사용 중 "
                 "사용자가 이상 현상을 직접 신고했습니다."
             ),
-            "additional_note": _mask_sensitive_text(user_note),
+            "additional_note": _mask_sensitive_text(
+                user_note
+            ),
             "screenshot": "2단계 연결 예정",
             "status": "미처리",
             "technical_traceback": "",
@@ -1241,22 +1542,32 @@ def show_manual_error_report_dialog():
 
         try:
             save_error_report(report)
+            st.session_state["last_screen"] = (
+                current_screen
+            )
+            st.session_state["last_function"] = (
+                current_function
+            )
             st.success(
-                f"✅ 신고가 접수되었습니다. 신고번호: {report['report_id']}"
+                "✅ 신고가 접수되었습니다. "
+                f"신고번호: {report['report_id']}"
             )
         except Exception as e:
-            st.error(f"신고 저장 중 오류가 발생했습니다: {e}")
+            st.error(
+                f"신고 저장 중 오류가 발생했습니다: {e}"
+            )
 
 
-def render_floating_error_button(screen, function, key_suffix):
+
+def render_floating_error_button():
     """
-    현재 탭 안에 플로팅 오류 신고 버튼을 표시합니다.
-    버튼을 누르면 해당 탭의 화면/기능 정보가 신고서에 자동 반영됩니다.
+    메인 화면 전체에 단 하나의 플로팅 오류 신고 버튼만 표시합니다.
+    Streamlit의 상태 추적 탭(main_tabs)을 읽어 현재 화면을 정확히 기록합니다.
     """
     st.markdown(
         """
         <style>
-        [class*="st-key-floating_error_report_"] {
+        .st-key-floating_error_report_global {
             position: fixed;
             right: 24px;
             bottom: 24px;
@@ -1264,7 +1575,7 @@ def render_floating_error_button(screen, function, key_suffix):
             width: auto !important;
         }
 
-        [class*="st-key-floating_error_report_"] button {
+        .st-key-floating_error_report_global button {
             border-radius: 999px !important;
             padding: 0.65rem 1rem !important;
             box-shadow: 0 4px 18px rgba(0, 0, 0, 0.20);
@@ -1275,15 +1586,29 @@ def render_floating_error_button(screen, function, key_suffix):
         unsafe_allow_html=True,
     )
 
-    with st.container(key=f"floating_error_report_{key_suffix}"):
+    with st.container(key="floating_error_report_global"):
         if st.button(
             "⚠️ 오류 신고",
-            key=f"floating_error_report_button_{key_suffix}",
+            key="floating_error_report_button_global",
             help="현재 화면의 오류 또는 이상 현상을 신고합니다.",
         ):
-            # 신고 버튼이 눌린 '현재 탭'을 정확히 기록
-            st.session_state["last_screen"] = screen
-            st.session_state["last_function"] = function
+            active_screen = st.session_state.get(
+                "main_tabs",
+                st.session_state.get("last_screen", "🏠 대시보드"),
+            )
+
+            if active_screen not in SCREEN_FUNCTION_MAP:
+                active_screen = "🏠 대시보드"
+
+            # 현재 탭 정보만 갱신. 입력/응답시간은 다른 탭 값과 섞지 않도록
+            # 팝업에서 화면 일치 여부를 다시 확인합니다.
+            st.session_state["last_screen"] = active_screen
+            st.session_state["last_function"] = SCREEN_FUNCTION_MAP[active_screen]
+
+            # 이전에 열었던 팝업의 화면 선택값이 남지 않게,
+            # 신고 버튼을 누른 현재 탭으로 매번 초기화합니다.
+            st.session_state["manual_report_screen_select"] = active_screen
+
             show_manual_error_report_dialog()
 
 
@@ -2128,6 +2453,522 @@ def classify_excel_files(excel_data):
 
 
 # =========================================================
+# Excel 업무자료 -> 온보딩 일과표 HTML 연동
+# =========================================================
+def parse_onboarding_schedule_export(uploaded_file):
+    """
+    팀원 일정표에서 저장한 JSON을 인수인계서의
+    '향후 1개월 주요 일정' 형식으로 변환합니다.
+    """
+    try:
+        payload = json.loads(
+            uploaded_file.getvalue().decode("utf-8-sig")
+        )
+    except Exception as e:
+        raise ValueError(
+            "온보딩 일정 JSON 파일을 읽지 못했습니다."
+        ) from e
+
+    rows = payload.get("rows", [])
+    if not isinstance(rows, list):
+        raise ValueError(
+            "올바른 온보딩 일정 JSON 형식이 아닙니다."
+        )
+
+    monthly_records = []
+
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+
+        task = safe_value(row.get("task", ""))
+        if not task:
+            continue
+
+        date_value = safe_value(row.get("date", ""))
+        time_value = safe_value(row.get("time", ""))
+        week_value = safe_value(row.get("week", ""))
+        detail = safe_value(row.get("detail", ""))
+        source = safe_value(row.get("source", ""))
+        edited_by = safe_value(row.get("editedBy", ""))
+
+        schedule_title = (
+            f"{time_value} · {task}"
+            if time_value
+            else task
+        )
+
+        note_parts = []
+        if week_value:
+            note_parts.append(week_value)
+        if detail:
+            note_parts.append(detail)
+        if source:
+            note_parts.append(f"출처: {source}")
+        if edited_by:
+            editor_label = (
+                "선임자"
+                if edited_by == "mentor"
+                else "신입"
+            )
+            note_parts.append(f"{editor_label} 수정")
+
+        monthly_records.append(
+            {
+                "일자": date_value,
+                "일정 내용": schedule_title,
+                "비고": " · ".join(note_parts),
+            }
+        )
+
+    return monthly_records, payload
+
+
+def merge_monthly_schedule(base_records, onboarding_records):
+    """기존 일정과 온보딩 최종 일정을 중복 없이 병합."""
+    merged = []
+    seen = set()
+
+    for record in list(base_records or []) + list(onboarding_records or []):
+        normalized = {
+            "일자": safe_value(record.get("일자", "")),
+            "일정 내용": safe_value(record.get("일정 내용", "")),
+            "비고": safe_value(record.get("비고", "")),
+        }
+
+        if not any(normalized.values()):
+            continue
+
+        key = (
+            normalized["일자"],
+            normalized["일정 내용"],
+            normalized["비고"],
+        )
+        if key in seen:
+            continue
+
+        seen.add(key)
+        merged.append(normalized)
+
+    return merged
+
+
+def _first_existing_value(row, candidates, default=""):
+    """후보 컬럼 중 실제로 존재하고 값이 있는 첫 번째 값을 반환."""
+    for column in candidates:
+        if column in row.index:
+            value = safe_value(row.get(column, ""))
+            if value:
+                return value
+    return default
+
+
+def _schedule_date_value(row):
+    """업무일정에서 일정표에 사용할 날짜를 찾습니다."""
+    raw = _first_existing_value(
+        row,
+        ["일자", "날짜", "마감", "마감일"],
+    )
+    if not raw:
+        return ""
+    return _format_dashboard_date(raw)
+
+
+def _project_deadline_value(row):
+    raw = _first_existing_value(
+        row,
+        ["마감일", "마감", "완료 예정일", "완료예정일"],
+    )
+    if not raw:
+        return ""
+    return _format_dashboard_date(raw)
+
+
+def _asset_deadline_value(row):
+    raw = _first_existing_value(
+        row,
+        ["완료 목표일", "완료목표일", "마감일", "마감"],
+    )
+    if not raw:
+        return ""
+    return _format_dashboard_date(raw)
+
+
+def _df_to_onboarding_data(
+    schedule_df,
+    project_df,
+    contact_df,
+    asset_df,
+):
+    """
+    Streamlit에서 업로드한 01~04 Excel 데이터를
+    팀원 일정표 HTML이 사용하던 JavaScript 배열 구조로 변환합니다.
+    """
+    data = {
+        "schedule_tasks": None,
+        "project_deadline_tasks": None,
+        "asset_deadline_tasks": None,
+        "project_overview": None,
+        "asset_overview": None,
+        "contacts": None,
+    }
+
+    # 01. 업무일정
+    if schedule_df is not None:
+        schedule_tasks = []
+
+        for _, row in schedule_df.iterrows():
+            date_value = _schedule_date_value(row)
+            title = _first_existing_value(
+                row,
+                ["업무", "업무명", "일정", "내용"],
+            )
+
+            # 일정표에서 실제 업무로 쓸 수 없는 완전 빈 행은 제외
+            if not title:
+                continue
+
+            schedule_tasks.append(
+                {
+                    "date": date_value,
+                    "title": title,
+                    "priority": _first_existing_value(
+                        row,
+                        ["우선순위", "중요도"],
+                        "중",
+                    ),
+                    "nextAction": _first_existing_value(
+                        row,
+                        ["다음 조치", "다음조치", "다음 액션", "다음액션"],
+                    ),
+                    "note": _first_existing_value(
+                        row,
+                        ["비고", "주의사항", "메모"],
+                    ),
+                    "source": "Streamlit 업로드 · 업무일정 Excel",
+                }
+            )
+
+        data["schedule_tasks"] = schedule_tasks
+
+    # 02. 프로젝트 진행현황
+    if project_df is not None:
+        deadline_tasks = []
+        overview = []
+
+        for _, row in project_df.iterrows():
+            project_name = _first_existing_value(
+                row,
+                ["프로젝트/현장", "프로젝트", "현장", "프로젝트명"],
+            )
+            if not project_name:
+                continue
+
+            deadline = _project_deadline_value(row)
+            current_stage = _first_existing_value(
+                row,
+                ["현재 단계", "단계", "상태"],
+            )
+            progress = _first_existing_value(
+                row,
+                ["진행률", "진척률"],
+            )
+            next_action = _first_existing_value(
+                row,
+                ["다음 액션", "다음액션", "다음 조치", "다음조치"],
+            )
+            risk = _first_existing_value(
+                row,
+                ["리스크/이슈", "리스크", "이슈", "특이사항"],
+            )
+            priority = _first_existing_value(
+                row,
+                ["우선순위", "중요도"],
+                "상",
+            )
+
+            if deadline:
+                deadline_tasks.append(
+                    {
+                        "date": deadline,
+                        "title": f"[마감] {project_name}",
+                        "priority": priority,
+                        "nextAction": next_action,
+                        "note": risk,
+                        "source": "Streamlit 업로드 · 프로젝트 진행현황 Excel",
+                    }
+                )
+
+            detail_parts = []
+            if current_stage:
+                detail_parts.append(current_stage)
+            if progress:
+                progress_text = (
+                    progress
+                    if "%" in str(progress)
+                    else f"진행률 {progress}%"
+                )
+                detail_parts.append(progress_text)
+            if next_action:
+                detail_parts.append(f"다음액션: {next_action}")
+            if risk:
+                detail_parts.append(f"이슈: {risk}")
+
+            overview.append(
+                {
+                    "title": f"[개요] {project_name} 현황 파악",
+                    "detail": " · ".join(detail_parts),
+                    "badge": "개요",
+                    "source": "Streamlit 업로드 · 프로젝트 진행현황 Excel",
+                }
+            )
+
+        data["project_deadline_tasks"] = deadline_tasks
+        data["project_overview"] = overview
+
+    # 03. 담당자 연락망
+    if contact_df is not None:
+        contacts = []
+
+        for _, row in contact_df.iterrows():
+            name = _first_existing_value(
+                row,
+                ["이름", "성명", "담당자", "담당자명"],
+            )
+            if not name:
+                continue
+
+            position = _first_existing_value(
+                row,
+                ["직책", "직급"],
+            )
+            organization = _first_existing_value(
+                row,
+                ["회사/부서", "회사", "부서", "소속"],
+            )
+            related_work = _first_existing_value(
+                row,
+                ["관련 업무", "관련업무", "담당 업무", "담당업무"],
+            )
+            caution = _first_existing_value(
+                row,
+                ["유의사항", "주의사항", "비고"],
+            )
+
+            label_parts = [name]
+            sub_parts = [
+                value
+                for value in [position, organization]
+                if value
+            ]
+            if sub_parts:
+                label_parts.append(
+                    f"({', '.join(sub_parts)})"
+                )
+
+            detail_parts = []
+            if related_work:
+                detail_parts.append(f"관련 업무: {related_work}")
+            if caution:
+                detail_parts.append(f"유의사항: {caution}")
+
+            contacts.append(
+                {
+                    "title": f"{' '.join(label_parts)} 컨택포인트 파악",
+                    "detail": " · ".join(detail_parts),
+                    "badge": "소개",
+                    "source": "Streamlit 업로드 · 담당자 연락망 Excel",
+                }
+            )
+
+        data["contacts"] = contacts
+
+    # 04. 계정·권한·자산
+    if asset_df is not None:
+        deadline_tasks = []
+        overview = []
+
+        for _, row in asset_df.iterrows():
+            asset_name = _first_existing_value(
+                row,
+                ["시스템/자산", "시스템", "자산", "시스템/자산명"],
+            )
+            if not asset_name:
+                continue
+
+            deadline = _asset_deadline_value(row)
+            status = _first_existing_value(
+                row,
+                ["상태", "인계 상태", "인계상태"],
+            )
+            handover_method = _first_existing_value(
+                row,
+                ["인계 방법", "인계방법"],
+            )
+            caution = _first_existing_value(
+                row,
+                ["주의사항", "유의사항", "비고"],
+            )
+            priority = _first_existing_value(
+                row,
+                ["우선순위", "중요도"],
+                "상",
+            )
+
+            if deadline:
+                deadline_tasks.append(
+                    {
+                        "date": deadline,
+                        "title": f"[마감] {asset_name} 인계",
+                        "priority": priority,
+                        "nextAction": handover_method,
+                        "note": caution,
+                        "source": "Streamlit 업로드 · 계정·권한·자산 Excel",
+                    }
+                )
+
+            detail_parts = []
+            if status:
+                detail_parts.append(f"상태: {status}")
+            if handover_method:
+                detail_parts.append(f"인계방법: {handover_method}")
+            if caution:
+                detail_parts.append(f"주의사항: {caution}")
+
+            overview.append(
+                {
+                    "title": f"[개요] {asset_name} 인계 상태 확인",
+                    "detail": " · ".join(detail_parts),
+                    "badge": "개요",
+                    "source": "Streamlit 업로드 · 계정·권한·자산 Excel",
+                }
+            )
+
+        data["asset_deadline_tasks"] = deadline_tasks
+        data["asset_overview"] = overview
+
+    return data
+
+
+def _replace_js_array(html, constant_name, value):
+    """
+    팀원 HTML 안의
+      const SOME_NAME = [ ... ];
+    배열을 Streamlit 업로드 데이터로 교체합니다.
+
+    value가 None이면 원래 HTML의 데모 데이터를 그대로 유지합니다.
+    """
+    if value is None:
+        return html
+
+    replacement = (
+        f"const {constant_name} = "
+        + json.dumps(
+            value,
+            ensure_ascii=False,
+        )
+        + ";"
+    )
+
+    pattern = (
+        rf"const\s+{re.escape(constant_name)}\s*=\s*"
+        rf"\[.*?\];"
+    )
+
+    updated, count = re.subn(
+        pattern,
+        replacement,
+        html,
+        count=1,
+        flags=re.DOTALL,
+    )
+
+    if count != 1:
+        raise ValueError(
+            f"일정표 HTML 데이터 영역을 찾지 못했습니다: "
+            f"{constant_name}"
+        )
+
+    return updated
+
+
+def build_onboarding_schedule_html(
+    schedule_df,
+    project_df,
+    contact_df,
+    asset_df,
+):
+    """
+    팀원이 만든 원본 HTML/JS 로직은 유지하면서
+    Streamlit Excel 업로드 데이터만 동적으로 주입합니다.
+    """
+    html = ONBOARDING_SCHEDULE_HTML
+
+    onboarding_data = _df_to_onboarding_data(
+        schedule_df,
+        project_df,
+        contact_df,
+        asset_df,
+    )
+
+    replacements = {
+        "EMBEDDED_SCHEDULE_TASKS": (
+            onboarding_data["schedule_tasks"]
+        ),
+        "EMBEDDED_PROJECT_DEADLINE_TASKS": (
+            onboarding_data["project_deadline_tasks"]
+        ),
+        "EMBEDDED_ASSET_DEADLINE_TASKS": (
+            onboarding_data["asset_deadline_tasks"]
+        ),
+        "EMBEDDED_PROJECT_OVERVIEW": (
+            onboarding_data["project_overview"]
+        ),
+        "EMBEDDED_ASSET_OVERVIEW": (
+            onboarding_data["asset_overview"]
+        ),
+        "EMBEDDED_CONTACTS": (
+            onboarding_data["contacts"]
+        ),
+    }
+
+    for constant_name, value in replacements.items():
+        html = _replace_js_array(
+            html,
+            constant_name,
+            value,
+        )
+
+    uploaded_count = sum(
+        df is not None
+        for df in [
+            schedule_df,
+            project_df,
+            contact_df,
+            asset_df,
+        ]
+    )
+
+    if uploaded_count:
+        original_hint = (
+            "업무일정·프로젝트 현황·자산·연락망 내용은 도구 안에 "
+            "이미 반영되어 있어서 따로 업로드하지 않아도 됩니다."
+        )
+        connected_hint = (
+            f"Streamlit의 📂 Excel 업무자료에서 업로드한 자료 "
+            f"{uploaded_count}/4종을 자동으로 연동했습니다. "
+            "회의록·캘린더·메일 DOCX만 아래에서 추가하면 됩니다."
+        )
+        html = html.replace(
+            original_hint,
+            connected_hint,
+            1,
+        )
+
+    return html
+
+
+# =========================================================
 # 5. 후임자 대시보드
 # =========================================================
 def _to_number(value):
@@ -2638,36 +3479,43 @@ project_df = None
 contact_df = None
 asset_df = None
 
-(
-    tab_dashboard,
-    tab_excel,
-    tab_qa,
-    tab_onboarding_schedule,
-    tab_memo,
-    tab_manual,
-    tab_error_admin,
-) = st.tabs(
-    [
-        "🏠 대시보드",
-        "📂 Excel 업무자료",
-        "💬 후임자 Q&A",
-        "📅 온보딩 일과표",
-        "🤖 업무메모 자동 인수인계",
-        "✍️ 직접 작성",
-        "🛠 관리자 오류함",
-    ]
+TABS_STATE_TRACKING_AVAILABLE = (
+    "on_change" in inspect.signature(st.tabs).parameters
+    and "key" in inspect.signature(st.tabs).parameters
 )
+
+if TABS_STATE_TRACKING_AVAILABLE:
+    (
+        tab_dashboard,
+        tab_excel,
+        tab_qa,
+        tab_onboarding_schedule,
+        tab_memo,
+        tab_manual,
+        tab_error_admin,
+    ) = st.tabs(
+        MAIN_SCREEN_OPTIONS,
+        key="main_tabs",
+        on_change="rerun",
+    )
+else:
+    # Streamlit 1.55 미만에서도 앱 전체가 깨지지 않도록 호환 모드로 실행합니다.
+    # 이 경우 수동 신고 팝업의 '현재 화면' 선택값을 사용자가 확인할 수 있습니다.
+    (
+        tab_dashboard,
+        tab_excel,
+        tab_qa,
+        tab_onboarding_schedule,
+        tab_memo,
+        tab_manual,
+        tab_error_admin,
+    ) = st.tabs(MAIN_SCREEN_OPTIONS)
 
 
 # =========================================================
 # TAB 1. Excel 업무자료 업로드
 # =========================================================
 with tab_excel:
-    render_floating_error_button(
-        screen="📂 Excel 업무자료",
-        function="업무자료 업로드 및 자동 분류",
-        key_suffix="excel",
-    )
     st.header("📂 업무자료 통합 업로드")
 
     st.info(
@@ -2808,11 +3656,6 @@ with tab_excel:
 # TAB 2. 후임자 대시보드
 # =========================================================
 with tab_dashboard:
-    render_floating_error_button(
-        screen="🏠 대시보드",
-        function="후임자 업무 대시보드",
-        key_suffix="dashboard",
-    )
     show_handover_dashboard(
         schedule_df,
         project_df,
@@ -2825,11 +3668,6 @@ with tab_dashboard:
 # TAB 2. 후임자 Q&A
 # =========================================================
 with tab_qa:
-    render_floating_error_button(
-        screen="💬 후임자 Q&A",
-        function="후임자 질문 검색",
-        key_suffix="qa",
-    )
     st.header("💬 후임자 Q&A")
 
     st.caption(
@@ -2944,6 +3782,16 @@ with tab_qa:
 
                     qa_elapsed = time.perf_counter() - qa_started_at
                     st.session_state["last_response_time"] = qa_elapsed
+                    response_by_screen = dict(
+                        st.session_state.get(
+                            "last_response_time_by_screen",
+                            {},
+                        )
+                    )
+                    response_by_screen["💬 후임자 Q&A"] = qa_elapsed
+                    st.session_state[
+                        "last_response_time_by_screen"
+                    ] = response_by_screen
 
                     track_action(
                         screen="💬 후임자 Q&A",
@@ -3034,43 +3882,161 @@ with tab_qa:
 
 
 # =========================================================
-# TAB 2. 업무메모 자동 인수인계
-
-# =========================================================
 # TAB. 후임자 온보딩 일과표 자동 생성기 (팀원 기능 통합)
 # =========================================================
 with tab_onboarding_schedule:
-    render_floating_error_button(
-        screen="📅 온보딩 일과표",
-        function="온보딩 일과표 생성 및 수정",
-        key_suffix="onboarding",
-    )
     st.header("📅 후임자 온보딩 일과표")
     st.caption(
-        "팀원이 제작한 일정표 자동 생성 모듈을 Streamlit 안에 통합했습니다. "
-        "회의록·캘린더·메일 DOCX를 업로드하면 1주차와 2주차 온보딩 일과표를 자동 생성합니다."
+        "📂 Excel 업무자료에서 업로드한 업무 데이터를 그대로 공유하고, "
+        "회의록·캘린더·메일 문서를 추가해 1주차와 2주차 온보딩 일과표를 생성합니다."
     )
+
+    connected_items = [
+        ("업무일정", schedule_df),
+        ("프로젝트", project_df),
+        ("담당자", contact_df),
+        ("권한·자산", asset_df),
+    ]
+    connected_count = sum(
+        df is not None
+        for _, df in connected_items
+    )
+
+    if connected_count:
+        st.success(
+            f"🔗 **Excel 업무자료 {connected_count}/4종 연동 중** · "
+            "같은 자료를 다시 업로드할 필요가 없습니다."
+        )
+
+        c1, c2, c3, c4 = st.columns(4)
+        for column, (label, df) in zip(
+            [c1, c2, c3, c4],
+            connected_items,
+        ):
+            with column:
+                st.metric(
+                    label,
+                    "✅ 공유됨"
+                    if df is not None
+                    else "➖ 데모값 사용",
+                )
+    else:
+        st.warning(
+            "아직 📂 Excel 업무자료에서 업로드한 자료가 없습니다. "
+            "현재는 팀원이 만든 기존 데모 데이터로 일정표를 생성합니다. "
+            "Excel 자료를 먼저 업로드하면 이 탭에도 자동 반영됩니다."
+        )
 
     st.info(
-        "💡 **사용 방법:** 아래 화면에서 회의록(.docx) 여러 개, "
-        "캘린더 문서(.docx) 1개, 메일(.docx) 여러 개를 넣고 "
-        "**일정표 생성**을 누르세요. 생성된 일정의 업무명은 화면에서 직접 수정할 수 있습니다."
+        "💡 이제 아래 일정표에서는 **회의록(.docx) · 캘린더(.docx) · 메일(.docx)**만 "
+        "추가하면 됩니다. 업무일정·프로젝트·담당자·권한/자산 자료는 "
+        "📂 Excel 업무자료 탭과 자동으로 공유됩니다."
     )
 
-    components.html(
-        ONBOARDING_SCHEDULE_HTML,
-        height=1450,
-        scrolling=True,
-    )
+    try:
+        onboarding_html = build_onboarding_schedule_html(
+            schedule_df,
+            project_df,
+            contact_df,
+            asset_df,
+        )
+
+        components.html(
+            onboarding_html,
+            height=1450,
+            scrolling=True,
+        )
+
+        st.divider()
+        st.subheader("🔗 최종 일정표를 인수인계서에 연결")
+
+        st.info(
+            "① 위 일정표에서 필요한 칸을 수정한 뒤 **최종 일정 저장(JSON)**을 누르고, "
+            "② 내려받은 `온보딩_최종일정.json`을 아래에 넣어주세요. "
+            "연결된 일정은 최종 인수인계서의 **IV. 향후 1개월 주요 일정**에 자동 반영됩니다."
+        )
+
+        final_schedule_file = st.file_uploader(
+            "온보딩 최종 일정 JSON",
+            type=["json"],
+            key="onboarding_final_schedule_upload",
+        )
+
+        if final_schedule_file is not None:
+            try:
+                onboarding_records, onboarding_payload = (
+                    parse_onboarding_schedule_export(
+                        final_schedule_file
+                    )
+                )
+
+                st.session_state[
+                    "onboarding_schedule_records"
+                ] = onboarding_records
+                st.session_state[
+                    "onboarding_schedule_payload"
+                ] = onboarding_payload
+
+                track_action(
+                    screen="📅 온보딩 일과표",
+                    function="최종 일정 인수인계서 연결",
+                    action="최종 일정 JSON 연결",
+                    input_value=final_schedule_file.name,
+                    metadata={
+                        "schedule_count": len(onboarding_records)
+                    },
+                )
+
+                st.success(
+                    f"✅ 최종 일정 {len(onboarding_records)}건을 "
+                    "인수인계서와 연결했습니다."
+                )
+
+                if onboarding_records:
+                    st.dataframe(
+                        pd.DataFrame(onboarding_records),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+
+            except Exception as e:
+                record_error(
+                    screen="📅 온보딩 일과표",
+                    function="최종 일정 JSON 연결",
+                    error=e,
+                    code="ONBOARDING_EXPORT_IMPORT_ERROR",
+                    input_value=final_schedule_file.name,
+                )
+                st.error(
+                    "❌ 최종 일정 파일 연결에 실패했습니다. "
+                    "오류가 자동 기록되었습니다."
+                )
+
+        elif st.session_state.get(
+            "onboarding_schedule_records"
+        ):
+            linked_count = len(
+                st.session_state["onboarding_schedule_records"]
+            )
+            st.success(
+                f"✅ 현재 세션에 최종 일정 {linked_count}건이 연결되어 있습니다."
+            )
+
+    except Exception as e:
+        record_error(
+            screen="📅 온보딩 일과표",
+            function="Excel 업무자료 일정표 연동",
+            error=e,
+            code="ONBOARDING_DATA_LINK_ERROR",
+        )
+        st.error(
+            "❌ Excel 업무자료를 일정표에 연결하는 중 오류가 발생했습니다. "
+            "기존 정상본에는 영향이 없으며 오류가 자동 기록되었습니다."
+        )
 
 
 # =========================================================
 with tab_memo:
-    render_floating_error_button(
-        screen="🤖 업무메모 자동 인수인계",
-        function="업무메모 자동 인수인계",
-        key_suffix="memo",
-    )
     st.header("🤖 업무메모 자동 인수인계")
 
     uploaded_memo = st.file_uploader(
@@ -3574,8 +4540,14 @@ with tab_memo:
                     auto_urgent_df
                 ),
 
-                "monthly_schedule": clean_records(
-                    auto_monthly_df
+                "monthly_schedule": merge_monthly_schedule(
+                    clean_records(
+                        auto_monthly_df
+                    ),
+                    st.session_state.get(
+                        "onboarding_schedule_records",
+                        [],
+                    ),
                 ),
 
                 "communication_note": auto_communication,
@@ -3616,6 +4588,18 @@ with tab_memo:
                 "위 내용을 확인하거나 수정한 뒤 "
                 "아래 버튼으로 최종 문서를 생성하세요."
             )
+
+            linked_schedule_count = len(
+                st.session_state.get(
+                    "onboarding_schedule_records",
+                    [],
+                )
+            )
+            if linked_schedule_count:
+                st.success(
+                    f"📅 온보딩 최종 일정 {linked_schedule_count}건이 "
+                    "이 문서의 '향후 1개월 주요 일정'에 반영됩니다."
+                )
 
             final_docx = build_docx(
                 reviewed_data
@@ -3663,11 +4647,6 @@ with tab_memo:
 # TAB 3. 직접 작성
 # =========================================================
 with tab_manual:
-    render_floating_error_button(
-        screen="✍️ 직접 작성",
-        function="인수인계서 직접 작성",
-        key_suffix="manual",
-    )
     st.header(
         "✍️ 인수인계서 직접 작성"
     )
@@ -4094,8 +5073,14 @@ with tab_manual:
             urgent_df
         ),
 
-        "monthly_schedule": clean_records(
-            monthly_df
+        "monthly_schedule": merge_monthly_schedule(
+            clean_records(
+                monthly_df
+            ),
+            st.session_state.get(
+                "onboarding_schedule_records",
+                [],
+            ),
         ),
 
         "communication_note": communication_note,
@@ -4129,6 +5114,18 @@ with tab_manual:
     st.subheader(
         "📄 자동 생성"
     )
+
+    linked_schedule_count = len(
+        st.session_state.get(
+            "onboarding_schedule_records",
+            [],
+        )
+    )
+    if linked_schedule_count:
+        st.success(
+            f"📅 온보딩 최종 일정 {linked_schedule_count}건이 "
+            "이 문서의 '향후 1개월 주요 일정'에 반영됩니다."
+        )
 
     json_bytes = json.dumps(
         manual_data,
@@ -4179,11 +5176,6 @@ with tab_manual:
 # 관리자 오류함
 # =========================================================
 with tab_error_admin:
-    render_floating_error_button(
-        screen="🛠 관리자 오류함",
-        function="오류 신고 관리",
-        key_suffix="error_admin",
-    )
     st.header("🛠 관리자 오류함")
     st.caption(
         "시스템이 자동 감지한 오류·응답 지연 정보를 사용자가 확인 후 전송하면 이곳에 접수됩니다. "
@@ -4283,6 +5275,12 @@ with tab_error_admin:
                         "traceback": selected_report.get("technical_traceback", ""),
                     }
                 )
+
+
+# =========================================================
+# 상시 오류 신고 버튼 - 현재 선택 탭 자동 추적
+# =========================================================
+render_floating_error_button()
 
 
 # =========================================================
